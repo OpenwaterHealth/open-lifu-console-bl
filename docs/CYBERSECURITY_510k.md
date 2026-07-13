@@ -5,7 +5,7 @@
 **Document type:** Premarket cybersecurity documentation
 **Status:** DRAFT — engineering input for 510(k) submission
 **Version:** 0.1
-**Date:** 2026-07-11
+**Date:** 2026-07-13
 
 > **Scope & disclaimer.** This document provides the **engineering/technical** cybersecurity
 > content that supports a 510(k) premarket submission for the device's embedded
