@@ -1,0 +1,22 @@
+{
+    "linux": {
+        "toolchain_gcc": "arm-none-eabi-gcc",
+        "gdb": "arm-none-eabi-gdb",
+        "openocd": "openocd",
+        "build_dir": "build",
+        "compile_commands": "${workspaceFolder}/build/Debug/compile_commands.json",
+        "stm32_device": "STM32F072xx",
+        "stm32_target": "stm32f0x.cfg",
+        "svd_file": "STM32F072.svd"
+    },
+    "windows": {
+        "toolchain_gcc": "arm-none-eabi-gcc",
+        "gdb": "arm-none-eabi-gdb",
+        "openocd": "openocd",
+        "build_dir": "build",
+        "compile_commands": "${workspaceFolder}/build/Release/compile_commands.json",
+        "stm32_device": "STM32F072xB",
+        "stm32_target": "stm32f0x.cfg",
+        "svd_file": "STM32F072.svd"
+    }
+}
