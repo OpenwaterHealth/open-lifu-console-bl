@@ -193,6 +193,7 @@ extern uint32_t uFlowCryptoValue;
 /* Exported functions ------------------------------------------------------- */
 SFU_BOOT_InitErrorTypeDef SFU_BOOT_RunSecureBootService(void);
 void SFU_BOOT_ForceReboot(void);
+void SFU_BOOT_PrintForcedDfuBanner(void);
 
 #ifdef __cplusplus
 }

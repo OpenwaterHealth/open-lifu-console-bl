@@ -125,6 +125,72 @@ static void bl_prepare_usb_dfu_mode(void)
   HAL_GPIO_WritePin(LD_B_GPIO_Port, LD_B_Pin, GPIO_PIN_RESET);
 }
 
+/**
+  * @brief  Jump to the STM32 built-in (system memory) DFU bootloader.
+  * @note   Requested by the application writing BL_BKP_REQ_STM32_DFU_MAGIC
+  *         ('DFUS') to BKP1R. On STM32F072 the system bootloader lives at
+  *         0x1FFFC800. The Cortex-M0 has no VTOR, so system memory is remapped
+  *         to 0x00000000 (SYSCFG MEM_MODE) before the jump. Does not return.
+  * @note   The board USB device port is gated by the USB mux/reset line, which
+  *         the ROM bootloader knows nothing about, so it is released here first.
+  *         GPIO output latches hold their state across the RCC de-init below.
+  * @note   The ROM bootloader will not refresh our IWDG, so it must not be
+  *         running here. Guaranteed by the caller: it jumps before MX_IWDG_Init()
+  *         (this boot never arms it) and the app's IWDG does not survive its
+  *         software reset into us (verified on hardware). See the caller for the
+  *         full rationale.
+  */
+static void bl_jump_to_system_bootloader(void)
+{
+  const uint32_t sysmem_base = 0x1FFFC800U;   /* STM32F07x system memory */
+  uint32_t boot_sp;
+  uint32_t boot_pc;
+
+  /* Release the USB device-port mux (PA15 high) so the ROM bootloader can
+   * enumerate; blue LED on for a visual cue. */
+  MX_GPIO_Init();
+  bl_prepare_usb_dfu_mode();
+
+  __disable_irq();
+
+  /* Reset the USB peripheral so the ROM bootloader sees it in a clean state
+   * (the application had it enumerated as a CDC device before it reset us). */
+  __HAL_RCC_USB_FORCE_RESET();
+  __HAL_RCC_USB_RELEASE_RESET();
+
+  /* Return the clock tree to its reset state (HSI 8 MHz). The ROM bootloader
+   * sets up its own clocks, including HSI48 for USB. */
+  HAL_RCC_DeInit();
+
+  /* Silence SysTick and clear any pending/enabled IRQs. */
+  SysTick->CTRL = 0U;
+  SysTick->LOAD = 0U;
+  SysTick->VAL  = 0U;
+  NVIC->ICER[0] = 0xFFFFFFFFU;
+  NVIC->ICPR[0] = 0xFFFFFFFFU;
+
+  /* Cortex-M0 has no VTOR: map system flash to 0x00000000 so the ROM
+   * bootloader's vector table is used (SYSCFG MEM_MODE = 01b). */
+  __HAL_RCC_SYSCFG_CLK_ENABLE();
+  SYSCFG->CFGR1 = (SYSCFG->CFGR1 & ~SYSCFG_CFGR1_MEM_MODE) | SYSCFG_CFGR1_MEM_MODE_0;
+
+  /* Load the ROM bootloader's initial stack pointer and reset vector, jump.
+   * Re-enable interrupts first: the ROM bootloader is entered by a call (not a
+   * real reset), so it inherits our PRIMASK — and its USB DFU is interrupt
+   * driven, so it will not enumerate with interrupts masked. All pending IRQs
+   * were just cleared above, so nothing spurious can fire before the jump. */
+  boot_sp = *(volatile uint32_t *)(sysmem_base);
+  boot_pc = *(volatile uint32_t *)(sysmem_base + 4U);
+  __set_MSP(boot_sp);
+  __enable_irq();
+  ((void (*)(void))boot_pc)();
+
+  while (1)
+  {
+    /* never reached */
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -154,6 +220,26 @@ int main(void)
   /* Persistent boot state lives in the RTC backup registers — the contract is
    * shared with the application (see memory_map.h). */
   bl_bootstate_init();
+
+  /* App-requested STM32 system (ROM) bootloader: the application writes 'DFUS'
+   * to BKP1R and resets. Jump immediately — before the IWDG is armed and before
+   * any secure-boot work. One-shot: consume the request so it cannot loop.
+   *
+   * Watchdog safety: the ROM bootloader does not know about (and will not
+   * refresh) our IWDG, so it must NOT be running during a ST DFU session or the
+   * ~26 s timeout would reset the device mid-update. Two guarantees keep it off:
+   *   1. This jump runs BEFORE MX_IWDG_Init() below, so this boot never arms it
+   *      (do not move MX_IWDG_Init() above this check).
+   *   2. The app's IWDG does not survive its NVIC_SystemReset() into us — a
+   *      software system reset clears the IWDG on this F072 (verified on
+   *      hardware: the device sits in ROM DFU indefinitely, >>26 s).
+   * A unit built with the hardware-watchdog option byte (IWDG_SW=0) would auto-
+   * start the IWDG at reset and cap ST DFU at ~26 s; these units use IWDG_SW=1. */
+  if (RTC->BKP1R == BL_BKP_REQ_STM32_DFU_MAGIC)
+  {
+    RTC->BKP1R = 0U;
+    bl_jump_to_system_bootloader(); /* does not return */
+  }
 
   /* App-requested DFU: the application writes 'DFU!' to BKP1R and resets.
    * One-shot: the request is consumed here so it cannot loop into DFU. */
@@ -189,7 +275,9 @@ int main(void)
    * gives ~26 s, enough headroom for the software ECDSA verify on the M0 while
    * still recovering from a hung verify or DFU session. Refreshed in the DFU
    * loop below; the launched application must refresh or re-init it.
-   * NOTE: matches the legacy bootloader behaviour of always running the IWDG. */
+   * NOTE: matches the legacy bootloader behaviour of always running the IWDG.
+   * NOTE: must stay AFTER the BL_BKP_REQ_STM32_DFU_MAGIC jump above — the STM32
+   * ROM bootloader cannot refresh this watchdog (see that block). */
   MX_IWDG_Init();
 
   /* USER CODE END SysInit */
@@ -203,6 +291,13 @@ int main(void)
      * It returns only when no valid firmware is available (or the image is
      * corrupted/unsigned): fall through to USB DFU download mode. */
     (void)SFU_BOOT_RunSecureBootService();
+  }
+  else
+  {
+    /* Forced DFU (app 'DFU!' request or boot-fail fallback) bypasses the secure
+     * boot service, which is what brings up the trace UART and prints the boot
+     * banner. Print it here so the DFU path is not silent on the trace UART. */
+    SFU_BOOT_PrintForcedDfuBanner();
   }
 
   /* -------------------- USB DFU download mode -------------------- */

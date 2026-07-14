@@ -285,6 +285,25 @@ static void PrintBootBanner(void)
 }
 
 /**
+  * @brief  Bring up the trace UART and print the boot banner for the forced-DFU
+  *         path.
+  * @note   The app-requested ('DFU!' in BKP1R) and boot-fail DFU entries are
+  *         handled directly in main.c and bypass SFU_BOOT_RunSecureBootService()
+  *         / SFU_BOOT_Init(), which is what normally initialises the trace COM
+  *         port and prints the banner. Without this the forced-DFU session is
+  *         completely silent on the trace UART. No-op in Release builds, where
+  *         the trace subsystem (and SFU_COM_Init) are compiled out.
+  * @retval None
+  */
+void SFU_BOOT_PrintForcedDfuBanner(void)
+{
+#if defined(SFU_DEBUG_MODE) || defined(SFU_TEST_PROTECTION)
+  (void) SFU_COM_Init();
+#endif /* SFU_DEBUG_MODE || SFU_TEST_PROTECTION */
+  PrintBootBanner();
+}
+
+/**
   * @brief  Initialize the Secure Boot State machine.
   * @param  None
   * @retval SFU_ErrorStatus SFU_SUCCESS if successful, SFU_ERROR otherwise.
