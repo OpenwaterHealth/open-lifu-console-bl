@@ -1,0 +1,199 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:f2bd2314-2cc9-42f7-b872-621bbc4e9f59",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-07-16T00:00:00Z",
+    "authors": [
+      { "name": "Openwater Firmware Engineering" }
+    ],
+    "tools": [
+      {
+        "vendor": "Openwater",
+        "name": "curated-sbom",
+        "version": "1.0",
+        "notes": "Hand-curated CycloneDX SBOM. Component versions are traced to committed source: STM32Cube FW_F0 pack from lifu-console-bl.ioc; STM32F0xx HAL from stm32f0xx_hal.c version macros; CMSIS from cmsis_version.h / stm32f0xx.h; Secure Engine from its Release_Notes.html; CMOX cryptographic library by byte-identical hash match of lib/libSTM32Cryptographic_CM0_CM0PLUS.a against the STM32CubeExpansion_Crypto_V5.0.0 (X-CUBE-CRYPTOLIB) package. The USB Device Library headers in this tree carry no internal version macros, so that component is pinned to the STM32Cube FW_F0 V1.11.6 pack that delivers them. Core/Src/uECC.c (micro-ecc) and Core/Src/sha256.c are present in the source tree but are not referenced by any CMake source list and are not compiled into the firmware; micro-ecc is recorded below with scope=excluded, and sha256.c (an unattributed standard SHA-256 implementation) is likewise not part of the shipped image."
+      }
+    ],
+    "component": {
+      "bom-ref": "openwater-lifu-console-bl",
+      "type": "firmware",
+      "group": "cc.openwater",
+      "name": "open-lifu-console-bl",
+      "version": "0bb435c",
+      "description": "Openwater LIFU console secure bootloader (SBSFU) firmware for STM32F072 (Console Power PCB). Single-image build: the Secure Engine is linked directly into the bootloader ELF (no separate SECoreBin binary).",
+      "publisher": "Openwater",
+      "properties": [
+        { "name": "openwater:version-source", "value": "git describe (injected at build time as FW_VERSION)" },
+        { "name": "openwater:mcu", "value": "STM32F072RBHx (Arm Cortex-M0)" }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "stm32cube-fw-f0",
+      "type": "framework",
+      "group": "com.st",
+      "name": "STM32Cube MCU Package for STM32F0 (FW_F0)",
+      "version": "1.11.6",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "STM32Cube firmware package delivering the STM32F0 HAL/LL drivers, CMSIS device files, and ST middleware used by this project.",
+      "licenses": [ { "license": { "id": "Apache-2.0" } } ],
+      "properties": [
+        { "name": "openwater:evidence", "value": "lifu-console-bl.ioc: ProjectManager.FirmwarePackage=STM32Cube FW_F0 V1.11.6" }
+      ]
+    },
+    {
+      "bom-ref": "stm32f0xx-hal-driver",
+      "type": "library",
+      "group": "com.st",
+      "name": "STM32F0xx HAL Driver",
+      "version": "1.7.8",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "Hardware abstraction layer drivers for STM32F0.",
+      "licenses": [ { "license": { "id": "BSD-3-Clause" } } ],
+      "properties": [
+        { "name": "openwater:evidence", "value": "Drivers/STM32F0xx_HAL_Driver/Src/stm32f0xx_hal.c: __STM32F0xx_HAL_VERSION 0x01/0x07/0x08" }
+      ]
+    },
+    {
+      "bom-ref": "cmsis-core",
+      "type": "library",
+      "group": "org.arm",
+      "name": "CMSIS Core (Cortex-M)",
+      "version": "5.1.0",
+      "supplier": { "name": "Arm Limited" },
+      "publisher": "Arm Limited",
+      "description": "Cortex Microcontroller Software Interface Standard core headers.",
+      "licenses": [ { "license": { "id": "Apache-2.0" } } ],
+      "purl": "pkg:github/ARM-software/CMSIS_5@5.1.0",
+      "properties": [
+        { "name": "openwater:evidence", "value": "Drivers/CMSIS/Include/cmsis_version.h: __CM_CMSIS_VERSION_MAIN=5, __CM_CMSIS_VERSION_SUB=1" }
+      ]
+    },
+    {
+      "bom-ref": "cmsis-device-stm32f0xx",
+      "type": "library",
+      "group": "com.st",
+      "name": "CMSIS Device STM32F0xx",
+      "version": "2.3.7",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "CMSIS device support (headers, startup, system) for STM32F0xx.",
+      "licenses": [ { "license": { "id": "Apache-2.0" } } ],
+      "properties": [
+        { "name": "openwater:evidence", "value": "Drivers/CMSIS/Device/ST/STM32F0xx/Include/stm32f0xx.h: __STM32F0_DEVICE_VERSION 0x02/0x03/0x07" }
+      ]
+    },
+    {
+      "bom-ref": "stm32-usb-device-library",
+      "type": "library",
+      "group": "com.st",
+      "name": "STM32 USB Device Library",
+      "version": "1.11.6",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "ST USB device core plus DFU class, used by the USB DFU bootloader path. Version pinned to the STM32Cube FW_F0 pack (internal library version macros are not present in the committed headers).",
+      "licenses": [ { "license": { "name": "SLA0044 (ST Ultimate Liberty)" } } ],
+      "properties": [
+        { "name": "openwater:version-basis", "value": "STM32Cube FW_F0 V1.11.6 pack" }
+      ]
+    },
+    {
+      "bom-ref": "x-cube-sbsfu",
+      "type": "application",
+      "group": "com.st",
+      "name": "X-CUBE-SBSFU",
+      "version": "2.8.0",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "STM32Cube expansion package for Secure Boot and Secure Firmware Update. Provides the SBSFU application code adapted in SBSFU/App and SBSFU/Target and delivers the Secure Engine middleware; ported by Openwater to STM32F072 (Cortex-M0) with cryptography rerouted to the CMOX library.",
+      "licenses": [ { "license": { "name": "SLA0044 (ST Ultimate Liberty)" } } ],
+      "properties": [
+        { "name": "openwater:evidence", "value": "STM32CubeExpansion_SBSFU_V2.8.0 package: Release_Notes.html v2.8.0 / 05-September-2025; the committed STM32_Secure_Engine v2.5.4 matches the Secure Engine delivered by that package" }
+      ]
+    },
+    {
+      "bom-ref": "stm32-secure-engine",
+      "type": "library",
+      "group": "com.st",
+      "name": "STM32 Secure Engine",
+      "version": "2.5.4",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "Secure Engine (SE) protected firmware services used by the SBSFU secure bootloader. In this single-image build the SE core and the SE crypto backend (SECoreBin/Src) are compiled directly into the bootloader ELF.",
+      "licenses": [ { "license": { "name": "SLA0044 (ST Ultimate Liberty)" } } ],
+      "properties": [
+        { "name": "openwater:evidence", "value": "Middlewares/ST/STM32_Secure_Engine/Release_Notes.html: v2.5.4 / 26-September-2025" }
+      ]
+    },
+    {
+      "bom-ref": "x-cube-cryptolib-cmox",
+      "type": "library",
+      "group": "com.st",
+      "name": "STM32 Cryptographic Library (CMOX, X-CUBE-CRYPTOLIB)",
+      "version": "5.0.0",
+      "supplier": { "name": "STMicroelectronics" },
+      "publisher": "STMicroelectronics",
+      "description": "ST CMOX cryptographic library used for secure boot image verification: SHA-256 and ECDSA P-256 verify via cmox_crypto.h in SECoreBin/Src/se_crypto_bootloader.c.",
+      "licenses": [ { "license": { "name": "SLA0044 (ST Ultimate Liberty)" } } ],
+      "properties": [
+        { "name": "openwater:evidence", "value": "Middlewares/ST/STM32_Cryptographic/lib/libSTM32Cryptographic_CM0_CM0PLUS.a is byte-identical (SHA-256 af5a92601d536a97cb78760611f94f54026ab75c93a446eba52b2e9e5bdc0317) to the same archive in the STM32CubeExpansion_Crypto_V5.0.0 package (Release_Notes.html: V5.0.0)" },
+        { "name": "openwater:linked-binary", "value": "Middlewares/ST/STM32_Cryptographic/lib/libSTM32Cryptographic_CM0_CM0PLUS.a (linked by CMakeLists.txt)" }
+      ]
+    },
+    {
+      "bom-ref": "micro-ecc",
+      "type": "library",
+      "group": "com.github.kmackay",
+      "name": "micro-ecc (uECC)",
+      "scope": "excluded",
+      "supplier": { "name": "Kenneth MacKay" },
+      "author": "Kenneth MacKay",
+      "description": "Small ECDH/ECDSA library. Present in the source tree as Core/Src/uECC.c with supporting headers, but not referenced by any CMake source list and not compiled into the firmware image.",
+      "licenses": [ { "license": { "id": "BSD-2-Clause" } } ],
+      "purl": "pkg:github/kmackay/micro-ecc",
+      "properties": [
+        { "name": "openwater:evidence", "value": "Core/Src/uECC.c: Copyright 2014, Kenneth MacKay. Licensed under the BSD 2-clause license. Not present in CMakeLists.txt or cmake/stm32cubemx/CMakeLists.txt source lists." }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "openwater-lifu-console-bl",
+      "dependsOn": [
+        "stm32cube-fw-f0",
+        "stm32f0xx-hal-driver",
+        "cmsis-core",
+        "cmsis-device-stm32f0xx",
+        "stm32-usb-device-library",
+        "x-cube-sbsfu",
+        "stm32-secure-engine",
+        "x-cube-cryptolib-cmox"
+      ]
+    },
+    {
+      "ref": "stm32cube-fw-f0",
+      "dependsOn": [
+        "stm32f0xx-hal-driver",
+        "cmsis-device-stm32f0xx",
+        "stm32-usb-device-library"
+      ]
+    },
+    {
+      "ref": "x-cube-sbsfu",
+      "dependsOn": [
+        "stm32-secure-engine",
+        "x-cube-cryptolib-cmox"
+      ]
+    },
+    { "ref": "stm32f0xx-hal-driver", "dependsOn": [ "cmsis-device-stm32f0xx" ] },
+    { "ref": "cmsis-device-stm32f0xx", "dependsOn": [ "cmsis-core" ] },
+    { "ref": "stm32-usb-device-library", "dependsOn": [ "stm32f0xx-hal-driver" ] },
+    { "ref": "stm32-secure-engine", "dependsOn": [ "x-cube-cryptolib-cmox" ] },
+    { "ref": "micro-ecc", "dependsOn": [] }
+  ]
+}
