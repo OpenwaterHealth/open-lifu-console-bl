@@ -72,7 +72,13 @@
 #define USBD_INTERFACE_STRING_FS     "DFU Interface"
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
-
+/* Brand the DFU product string with the bootloader version so a host can
+ * identify this bootloader generation (vs the STM32 ROM DFU "STM32
+ * BOOTLOADER" and the legacy "LIFU BL DFU 0.0.x") straight from the USB
+ * descriptor, without a DFU transaction. FW_VERSION is the git describe
+ * from the generated version.h (via common.h). */
+#undef  USBD_PRODUCT_STRING_FS
+#define USBD_PRODUCT_STRING_FS     "OW DFU " FW_VERSION
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
