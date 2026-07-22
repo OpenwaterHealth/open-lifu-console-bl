@@ -470,8 +470,23 @@ uint8_t DFU_ImageDownloadComplete(void)
 
   /* Manifestation is finished once DFU_Leave() has run (manif_state COMPLETE).
    * dfu-util in DfuSe mode leaves us in MANIFEST_SYNC; a host that polls to the
-   * end leaves us in dfuIDLE. Accept either. The s_dfu_image_written gate keeps
-   * this from matching the power-on default state. */
+   * end leaves us in dfuIDLE. Accept either.
+   *
+   * CRITICAL extra gate — wlength == 0: the middleware leaves manif_state at
+   * its power-on value (COMPLETE) for the entire data phase; it only cycles
+   * IN_PROGRESS -> COMPLETE through an actual leave. So (image written +
+   * dfuIDLE + COMPLETE) alone is NOT proof of manifestation: a host that
+   * sends DFU_ABORT between data blocks (or after the last one) matches it
+   * and gets rebooted MID-DOWNLOAD (root cause of intermittent mid-write
+   * device drops seen on the transmitter; same heuristic here). hdfu->wlength
+   * holds the length of the most recent DNLOAD: > 0 for every data/command
+   * block, 0 only for the zero-length "leave DFU" download. Requiring
+   * wlength == 0 means a reboot can only follow a genuine leave request. */
+  if (hdfu->wlength != 0U)
+  {
+    return 0U;
+  }
+
   if (hdfu->manif_state != DFU_MANIFEST_COMPLETE)
   {
     return 0U;
