@@ -97,10 +97,11 @@ static volatile uint8_t s_dfu_reset_requested = 0U;
 #define FLASH_DESC_STR      "@Internal Flash/0x08000000/32*2Ka,30*2Kg,02*2Ka"
 
 /* DFU writable window: the active application slot only. The bootloader (below
- * APP_FLASH_BASE) and everything at/above FLASH_END_ADDR (the user-config page)
- * are excluded and cannot be erased, written, or read over DFU. */
-#define APP_FLASH_BASE      MEM_DFU_WRITABLE_BASE   /* 0x0800A000 (active slot start) */
-#define FLASH_END_ADDR      MEM_DFU_WRITABLE_END    /* 0x0801F800 (slot end + 1, exclusive) */
+ * APP_FLASH_BASE) and everything at/above FLASH_END_ADDR (the app-config and
+ * user-config pages) are excluded and cannot be erased, written, or read over
+ * DFU. */
+#define APP_FLASH_BASE      MEM_DFU_WRITABLE_BASE   /* 0x08010000 (active slot start) */
+#define FLASH_END_ADDR      MEM_DFU_WRITABLE_END    /* 0x0801F000 (slot end + 1, exclusive) */
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
 
