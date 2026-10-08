@@ -1,5 +1,9 @@
 # Openwater Open-LIFU Console Secure Bootloader
 
+## Disclaimer
+
+CAUTION - Investigational device. Limited by Federal (or United States) law to investigational use. The system described here has not been evaluated by the FDA and is not designed for the treatment or diagnosis of any disease. It is provided AS-IS, with no warranties. User assumes all liability and responsibility for identifying and mitigating risks associated with using this software.
+
 STM32F072 secure bootloader (SBSFU) for the Console Power PCB. This is a port
 of the proven Openwater open-motion-console-bl (STM32H743) secure boot chain,
 built on ST's X-CUBE-SBSFU Secure Boot / Secure Firmware Update architecture,
