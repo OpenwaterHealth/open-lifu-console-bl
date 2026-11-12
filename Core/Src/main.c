@@ -140,6 +140,7 @@ static void bl_prepare_usb_dfu_mode(void)
   *         software reset into us (verified on hardware). See the caller for the
   *         full rationale.
   */
+#if defined(LIFU_BL_RESEARCH)
 static void bl_jump_to_system_bootloader(void)
 {
   const uint32_t sysmem_base = 0x1FFFC800U;   /* STM32F07x system memory */
@@ -190,6 +191,7 @@ static void bl_jump_to_system_bootloader(void)
     /* never reached */
   }
 }
+#endif /* LIFU_BL_RESEARCH */
 
 /* USER CODE END 0 */
 
@@ -238,7 +240,13 @@ int main(void)
   if (RTC->BKP1R == BL_BKP_REQ_STM32_DFU_MAGIC)
   {
     RTC->BKP1R = 0U;
+#if defined(LIFU_BL_RESEARCH)
     bl_jump_to_system_bootloader(); /* does not return */
+#else
+    /* Clinical: no ROM-bootloader entry. It runs before (and without) the
+     * protection check, and under RDP1 its read-unprotect command mass-erases
+     * the chip. The request is consumed and ignored; the unit boots normally. */
+#endif /* LIFU_BL_RESEARCH */
   }
 
   /* App-requested DFU: the application writes 'DFU!' to BKP1R and resets.
@@ -295,8 +303,9 @@ int main(void)
   else
   {
     /* Forced DFU (app 'DFU!' request or boot-fail fallback) bypasses the secure
-     * boot service, which is what brings up the trace UART and prints the boot
-     * banner. Print it here so the DFU path is not silent on the trace UART. */
+     * boot service, which is what brings up the trace UART, prints the boot
+     * banner and applies the option-byte protections. Do the latter two here. */
+    SFU_BOOT_ApplyStaticProtectionsForDfu();
     SFU_BOOT_PrintForcedDfuBanner();
   }
 

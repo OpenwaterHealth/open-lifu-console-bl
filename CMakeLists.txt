@@ -151,12 +151,26 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Linker
 )
 
-# Add project symbols (macros)
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Enables SFU_DEBUG_MODE traces on USART3 (see app_sfu.h); flip off if the
-    # Release image ever needs the extra flash
-    DEBUG_ENABLED
-)
+# Bootloader variant (see app_sfu.h):
+#   research : unlocked, trusts py-tools/keys/research/ecdsa_public.pem, debug traces on
+#   clinical : WRP + RDP level 1 applied on first boot, trusts the KMS key
+#              py-tools/keys/clinical/ecdsa_public.pem, no traces, no ROM-DFU entry
+set(LIFU_BL_VARIANT "research" CACHE STRING "Bootloader variant: research or clinical")
+set_property(CACHE LIFU_BL_VARIANT PROPERTY STRINGS research clinical)
+if(LIFU_BL_VARIANT STREQUAL "clinical")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LIFU_BL_CLINICAL)
+elseif(LIFU_BL_VARIANT STREQUAL "research")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        LIFU_BL_RESEARCH
+        # Enables SFU_DEBUG_MODE traces on USART3 (see app_sfu.h)
+        DEBUG_ENABLED
+    )
+else()
+    message(FATAL_ERROR "LIFU_BL_VARIANT must be research or clinical, got '${LIFU_BL_VARIANT}'")
+endif()
+# The SE key block (SECoreBin/Startup/se_key.s) must be generated from this variant's PEM.
+set(LIFU_BL_PEM "${CMAKE_SOURCE_DIR}/py-tools/keys/${LIFU_BL_VARIANT}/ecdsa_public.pem")
+message(STATUS "BL variant   : ${LIFU_BL_VARIANT} (trusts ${LIFU_BL_PEM})")
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
