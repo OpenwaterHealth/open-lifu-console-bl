@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Build configuration (Debug or Release)'
+        description: 'Build configuration: Debug or Release (both build the research variant)'
         required: false
         default: 'Release'
   
@@ -38,7 +38,10 @@ jobs:
       # se_key.s embeds the product's AES-128 secret and the ECC public key, so
       # it is .gitignored and produced here at build time from:
       #   - AES-128 key : the SECOREBIN_AES_KEY secret (base64 of the 16 raw bytes)
-      #   - ECC pub key : derived from the committed py-tools/keys/ecdsa_public.pem
+      #   - ECC pub key : derived from the committed py-tools/keys/research/ecdsa_public.pem
+      #                   (Debug / Release presets build the research variant; the
+      #                   clinical variant trusts py-tools/keys/clinical/ and is NOT
+      #                   built here: its binaries go only to the private bucket)
       # The ECDSA *private* signing key is NOT needed to build the bootloader
       # (it only verifies signatures; signing happens in the application repo).
       # gen_se_key_s.py defaults to the Cortex-M0 (Thumb-1) encoding required by
@@ -47,6 +50,11 @@ jobs:
         env:
           SECOREBIN_AES_KEY: ${{ secrets.SECOREBIN_AES_KEY }}
         run: |
+          case "$BUILD_TYPE" in
+            Debug|Release) PEM=py-tools/keys/research/ecdsa_public.pem ;;
+            *) echo "::error::BUILD_TYPE '$BUILD_TYPE' not allowed here: this workflow publishes public release assets; clinical builds have their own pipeline." >&2
+               exit 1 ;;
+          esac
           if [ -z "$SECOREBIN_AES_KEY" ]; then
             echo "::error::SECOREBIN_AES_KEY secret is not set — cannot build SECoreBin." >&2
             exit 1
@@ -59,11 +67,11 @@ jobs:
             exit 1
           fi
           # Public key X/Y (32 bytes each) from the committed public PEM
-          python3 - "$RUNNER_TEMP" <<'PY'
+          python3 - "$RUNNER_TEMP" "$PEM" <<'PY'
           import sys
           from cryptography.hazmat.primitives import serialization
-          tmp = sys.argv[1]
-          pub = serialization.load_pem_public_key(open("py-tools/keys/ecdsa_public.pem", "rb").read())
+          tmp, pem = sys.argv[1], sys.argv[2]
+          pub = serialization.load_pem_public_key(open(pem, "rb").read())
           n = pub.public_numbers()
           open(f"{tmp}/pub_x.bin", "wb").write(n.x.to_bytes(32, "big"))
           open(f"{tmp}/pub_y.bin", "wb").write(n.y.to_bytes(32, "big"))
@@ -74,7 +82,7 @@ jobs:
             --pub-key-x "$RUNNER_TEMP/pub_x.bin" \
             --pub-key-y "$RUNNER_TEMP/pub_y.bin"
           rm -f "$RUNNER_TEMP/aes128.bin"
-          test -s SECoreBin/Startup/se_key.s && echo "se_key.s regenerated."
+          test -s SECoreBin/Startup/se_key.s && echo "se_key.s regenerated from $PEM."
 
       # ---------------------------
       # Build Firmware

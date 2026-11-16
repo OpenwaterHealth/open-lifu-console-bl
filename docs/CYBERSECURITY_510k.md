@@ -494,7 +494,7 @@ requires **both** the return value and the fault-check output to equal `CMOX_ECC
 
 **Key provisioning & CI.** The on-device key block (`SECoreBin/Startup/se_key.s`, Cortex-M0 Thumb-1
 encoding) is **not committed** (it embeds the AES key). It is regenerated at build time from the
-committed **public** key (`py-tools/keys/ecdsa_public.pem`) plus the `SECOREBIN_AES_KEY` CI secret
+committed **public** key (`py-tools/keys/research/ecdsa_public.pem` for the research variant; the clinical variant trusts the Cloud KMS key in `py-tools/keys/clinical/ecdsa_public.pem`) plus the `SECOREBIN_AES_KEY` CI secret
 (base64 of the 16-byte AES key). Product keys are held in `bl-keys/console` (private key + AES,
 never committed). The signing private key is provisioned only to the application repository's
 signing pipeline.
