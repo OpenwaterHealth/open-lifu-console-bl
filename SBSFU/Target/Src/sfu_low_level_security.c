@@ -79,13 +79,10 @@ static IWDG_HandleTypeDef   IwdgHandle;
 #ifdef SFU_WRP_PROTECT_ENABLE
 static uint32_t        SFU_LL_SECU_GetWRPMask(void);
 static SFU_ErrorStatus SFU_LL_SECU_CheckProtectionWRP(FLASH_OBProgramInitTypeDef *psFlashOptionBytes);
-static SFU_ErrorStatus SFU_LL_SECU_SetProtectionWRP(FLASH_OBProgramInitTypeDef *psFlashOptionBytes,
-                                                    SFU_BoolTypeDef *pbIsProtectionToBeApplied);
 #endif /* SFU_WRP_PROTECT_ENABLE */
-#ifdef SFU_RDP_PROTECT_ENABLE
-static SFU_ErrorStatus SFU_LL_SECU_SetProtectionRDP(FLASH_OBProgramInitTypeDef *psFlashOptionBytes,
-                                                    SFU_BoolTypeDef *pbIsProtectionToBeApplied);
-#endif /* SFU_RDP_PROTECT_ENABLE */
+#if defined(SFU_WRP_PROTECT_ENABLE) || defined(SFU_RDP_PROTECT_ENABLE)
+static SFU_ErrorStatus SFU_LL_SECU_WriteOptionBytes(uint8_t uRdp, uint32_t uWrpr);
+#endif /* SFU_WRP_PROTECT_ENABLE || SFU_RDP_PROTECT_ENABLE */
 #ifdef SFU_IWDG_PROTECT_ENABLE
 static SFU_ErrorStatus SFU_LL_SECU_SetProtectionIWDG(void);
 #endif /* SFU_IWDG_PROTECT_ENABLE */
@@ -141,21 +138,54 @@ SFU_ErrorStatus SFU_LL_SECU_CheckApplyStaticProtections(void)
   }
   else
   {
-    /* Check/Apply WRP ********************************************************/
+    /* Check/Apply WRP and RDP together.
+       On the F0 every option-byte write needs an erase of the WHOLE option-byte
+       block (RDP, USER, DATA0/1, WRP0-3). The HAL's per-option helpers each
+       erase on their own, so applying WRP then RDP through them loses the WRP
+       just written and resets USER/DATA to 0xFF. Instead: build the complete
+       target image from the live values, erase once, program it, launch once.
+       RDP level comes from FLASH->OBR (decoded by the HAL), so any RDP byte
+       other than 0xAA (level 0) / 0xCC (level 2) already reads as level 1. */
+#if defined(SFU_WRP_PROTECT_ENABLE) || defined(SFU_RDP_PROTECT_ENABLE)
+    uint32_t target_wrpr = flash_option_bytes.WRPPage;       /* WRPR: bit CLEAR = protected */
+    uint8_t  target_rdp  = (flash_option_bytes.RDPLevel == OB_RDP_LEVEL_0) ? OB_RDP_LEVEL_0 : OB_RDP_LEVEL_1;
+    SFU_BoolTypeDef to_write = SFU_FALSE;
+
 #ifdef SFU_WRP_PROTECT_ENABLE
-    if (e_ret_status == SFU_SUCCESS)
+    if ((~(flash_option_bytes.WRPPage) & SFU_LL_SECU_GetWRPMask()) != SFU_LL_SECU_GetWRPMask())
     {
-      e_ret_status = SFU_LL_SECU_SetProtectionWRP(&flash_option_bytes, &is_protection_to_be_applied);
+      target_wrpr &= ~SFU_LL_SECU_GetWRPMask();             /* keep existing protections, add ours */
+      to_write = SFU_TRUE;
     }
 #endif /* SFU_WRP_PROTECT_ENABLE */
-
-    /* Check/Apply RDP : should be done as last option bytes configuration */
 #ifdef SFU_RDP_PROTECT_ENABLE
+    if (flash_option_bytes.RDPLevel != SFU_PROTECT_RDP_LEVEL)
+    {
+      target_rdp = SFU_PROTECT_RDP_LEVEL;
+      to_write = SFU_TRUE;
+    }
+#endif /* SFU_RDP_PROTECT_ENABLE */
+    /* target_rdp is never OB_RDP_LEVEL_0 on a level-1 part: writing 0xAA there
+       would start a regression and mass-erase the flash. */
+
+    if (to_write != SFU_FALSE)
+    {
+      e_ret_status = SFU_LL_SECU_WriteOptionBytes(target_rdp, target_wrpr);
+      if (e_ret_status == SFU_SUCCESS)
+      {
+        is_protection_to_be_applied = SFU_TRUE;
+      }
+    }
     if (e_ret_status == SFU_SUCCESS)
     {
-      e_ret_status = SFU_LL_SECU_SetProtectionRDP(&flash_option_bytes, &is_protection_to_be_applied);
+#ifdef SFU_WRP_PROTECT_ENABLE
+      FLOW_CONTROL_STEP(uFlowProtectValue, FLOW_STEP_WRP, FLOW_CTRL_WRP);
+#endif /* SFU_WRP_PROTECT_ENABLE */
+#ifdef SFU_RDP_PROTECT_ENABLE
+      FLOW_CONTROL_STEP(uFlowProtectValue, FLOW_STEP_RDP, FLOW_CTRL_RDP);
+#endif /* SFU_RDP_PROTECT_ENABLE */
     }
-#endif  /* SFU_RDP_PROTECT_ENABLE */
+#endif /* SFU_WRP_PROTECT_ENABLE || SFU_RDP_PROTECT_ENABLE */
 
     if (e_ret_status == SFU_SUCCESS)
     {
@@ -347,76 +377,100 @@ static SFU_ErrorStatus SFU_LL_SECU_CheckProtectionWRP(FLASH_OBProgramInitTypeDef
   return SFU_SUCCESS;
 }
 
-/**
-  * @brief  Apply the WRP protection of the bootloader area if not yet applied.
-  * @param  psFlashOptionBytes: pointer to the Option Bytes structure
-  * @param  pbIsProtectionToBeApplied: set to SFU_TRUE if an OB launch is needed
-  * @retval SFU_ErrorStatus SFU_SUCCESS if successful, SFU_ERROR otherwise.
-  */
-static SFU_ErrorStatus SFU_LL_SECU_SetProtectionWRP(FLASH_OBProgramInitTypeDef *psFlashOptionBytes,
-                                                    SFU_BoolTypeDef *pbIsProtectionToBeApplied)
-{
-  SFU_ErrorStatus e_ret_status = SFU_SUCCESS;
-  uint32_t mask = SFU_LL_SECU_GetWRPMask();
-
-  if ((~(psFlashOptionBytes->WRPPage) & mask) != mask)
-  {
-    psFlashOptionBytes->OptionType = OPTIONBYTE_WRP;
-    psFlashOptionBytes->WRPState   = OB_WRPSTATE_ENABLE;
-    psFlashOptionBytes->WRPPage    = mask;
-
-    if (HAL_FLASHEx_OBProgram(psFlashOptionBytes) == HAL_OK)
-    {
-      *pbIsProtectionToBeApplied = SFU_TRUE;
-      FLOW_CONTROL_STEP(uFlowProtectValue, FLOW_STEP_WRP, FLOW_CTRL_WRP);
-    }
-    else
-    {
-      e_ret_status = SFU_ERROR;
-    }
-  }
-  else
-  {
-    FLOW_CONTROL_STEP(uFlowProtectValue, FLOW_STEP_WRP, FLOW_CTRL_WRP);
-  }
-  return e_ret_status;
-}
 #endif /* SFU_WRP_PROTECT_ENABLE */
 
-#ifdef SFU_RDP_PROTECT_ENABLE
+#if defined(SFU_WRP_PROTECT_ENABLE) || defined(SFU_RDP_PROTECT_ENABLE)
 /**
-  * @brief  Apply the RDP protection if not yet applied.
-  * @param  psFlashOptionBytes: pointer to the Option Bytes structure
-  * @param  pbIsProtectionToBeApplied: set to SFU_TRUE if an OB launch is needed
+  * @brief  Rewrite the complete F0 option-byte block in one erase/program pass.
+  *         RDP and WRP0-3 take the given values; USER and DATA0/DATA1 keep their
+  *         live values (FLASH->OBR). The new values load at the next
+  *         HAL_FLASH_OB_Launch() / reset, not before.
+  *         A power loss between the erase and the end of programming leaves the
+  *         block erased (0xFFFF), which loads as RDP level 1 with no WRP and
+  *         default USER bits: never level 0; the next boot runs this again.
+  * @note   Flash and option bytes must be unlocked by the caller.
+  * @param  uRdp: RDP byte to program (OB_RDP_LEVEL_x)
+  * @param  uWrpr: WRPR image, bit CLEAR = sector protected (FLASH->WRPR encoding)
   * @retval SFU_ErrorStatus SFU_SUCCESS if successful, SFU_ERROR otherwise.
   */
-static SFU_ErrorStatus SFU_LL_SECU_SetProtectionRDP(FLASH_OBProgramInitTypeDef *psFlashOptionBytes,
-                                                    SFU_BoolTypeDef *pbIsProtectionToBeApplied)
+static SFU_ErrorStatus SFU_LL_SECU_WriteOptionBytes(uint8_t uRdp, uint32_t uWrpr)
 {
-  SFU_ErrorStatus e_ret_status = SFU_SUCCESS;
+  const uint32_t obr   = FLASH->OBR;
+  /* Bits 3 and 7 of USER do not exist on the F072 and are written as 1 (as the HAL does). */
+  const uint8_t  user  = (uint8_t)(((obr & FLASH_OBR_USER) >> FLASH_OBR_USER_Pos) | 0x88U);
+  const uint8_t  data0 = (uint8_t)((obr & FLASH_OBR_DATA0) >> FLASH_OBR_DATA0_Pos);
+  const uint8_t  data1 = (uint8_t)((obr & FLASH_OBR_DATA1) >> FLASH_OBR_DATA1_Pos);
+  __IO uint16_t *const wrp[4] = { &OB->WRP0, &OB->WRP1, &OB->WRP2, &OB->WRP3 };
+  HAL_StatusTypeDef st;
+  uint32_t i;
 
-  if (psFlashOptionBytes->RDPLevel != SFU_PROTECT_RDP_LEVEL)
+  if (FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE) != HAL_OK)
   {
-    psFlashOptionBytes->OptionType = OPTIONBYTE_RDP;
-    psFlashOptionBytes->RDPLevel   = SFU_PROTECT_RDP_LEVEL;
+    return SFU_ERROR;
+  }
 
-    if (HAL_FLASHEx_OBProgram(psFlashOptionBytes) == HAL_OK)
+  /* 1. Erase the whole option-byte block */
+  SET_BIT(FLASH->CR, FLASH_CR_OPTER);
+  SET_BIT(FLASH->CR, FLASH_CR_STRT);
+  st = FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
+  CLEAR_BIT(FLASH->CR, FLASH_CR_OPTER);
+  if (st != HAL_OK)
+  {
+    return SFU_ERROR;
+  }
+
+  /* 2. Program the complete image (the hardware writes each complement byte) */
+  SET_BIT(FLASH->CR, FLASH_CR_OPTPG);
+
+  OB->RDP = uRdp;
+  st = FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
+
+  if (st == HAL_OK)
+  {
+    OB->USER = user;
+    st = FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
+  }
+  if ((st == HAL_OK) && (data0 != 0xFFU))
+  {
+    OB->DATA0 = data0;
+    st = FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
+  }
+  if ((st == HAL_OK) && (data1 != 0xFFU))
+  {
+    OB->DATA1 = data1;
+    st = FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
+  }
+  for (i = 0U; (i < 4U) && (st == HAL_OK); i++)
+  {
+    uint8_t b = (uint8_t)(uWrpr >> (8U * i));
+    if (b != 0xFFU)
     {
-      *pbIsProtectionToBeApplied = SFU_TRUE;
-      FLOW_CONTROL_STEP(uFlowProtectValue, FLOW_STEP_RDP, FLOW_CTRL_RDP);
-    }
-    else
-    {
-      e_ret_status = SFU_ERROR;
+      *wrp[i] = b;
+      st = FLASH_WaitForLastOperation(FLASH_TIMEOUT_VALUE);
     }
   }
-  else
+
+  CLEAR_BIT(FLASH->CR, FLASH_CR_OPTPG);
+  if (st != HAL_OK)
   {
-    FLOW_CONTROL_STEP(uFlowProtectValue, FLOW_STEP_RDP, FLOW_CTRL_RDP);
+    return SFU_ERROR;
   }
-  return e_ret_status;
+
+  /* 3. Read back the option-byte memory (low byte = value) before launching */
+  if (((uint8_t)OB->RDP != uRdp) || ((uint8_t)OB->USER != user))
+  {
+    return SFU_ERROR;
+  }
+  for (i = 0U; i < 4U; i++)
+  {
+    if ((uint8_t)*wrp[i] != (uint8_t)(uWrpr >> (8U * i)))
+    {
+      return SFU_ERROR;
+    }
+  }
+  return SFU_SUCCESS;
 }
-#endif /* SFU_RDP_PROTECT_ENABLE */
+#endif /* SFU_WRP_PROTECT_ENABLE || SFU_RDP_PROTECT_ENABLE */
 
 #ifdef SFU_DMA_PROTECT_ENABLE
 /**
