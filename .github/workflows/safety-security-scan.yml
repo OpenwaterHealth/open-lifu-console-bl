@@ -23,12 +23,18 @@ jobs:
       # --error-exitcode=1 ensures the build fails on findings
       # Third-party (micro-ecc uECC.c/sha256.c and their .inc tables — present
       # in tree but not compiled) and ST-generated files are suppressed.
+      # __ALIGN_BEGIN/__ALIGN_END are the ST USB library's alignment macros
+      # (empty for GCC); cppcheck >= 2.19 stops with unknownMacro without them.
+      # constParameterCallback in usbd_dfu_if.c: the MEM_If_* signatures are
+      # fixed by the ST USB DFU class (USBD_DFU_MediaTypeDef), not ours to change.
       - name: Run Cppcheck (Safety & Standards)
         run: |
           cppcheck --enable=warning,style,performance,portability \
                    --std=c11 \
                    --error-exitcode=1 \
                    --force \
+                   -D__ALIGN_BEGIN= \
+                   -D__ALIGN_END= \
                    --inline-suppr \
                    --template="[{severity}] {file}:{line} {id} - {message}" \
                    --suppress=missingIncludeSystem \
@@ -38,6 +44,7 @@ jobs:
                    --suppress=*:Core/Src/system_stm32f0xx.c \
                    --suppress=*:Core/Src/stm32f0xx_hal_msp.c \
                    --suppress=*:Core/Src/syscalls.c \
+                   --suppress=constParameterCallback:USB_DEVICE/App/usbd_dfu_if.c \
                    ./Core/Src ./USB_DEVICE/App
 
       # 2. Complexity Analysis (Lizard)
