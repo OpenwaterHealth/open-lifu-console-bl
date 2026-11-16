@@ -165,6 +165,18 @@ class STM32DFU:
     DFU_VERSION_ADDR = 0xFFFFFF00
     DFU_VERSION_LEN  = 64
 
+    # Verify before erase (usbd_dfu_if.c DFU_HDR_STAGE_VIRT_ADDR): the signed
+    # SFU header must be DNLOADed here first. The bootloader verifies it
+    # (ECDSA signature against its trusted key, size, anti-rollback) and only
+    # then allows the slot to be erased and written; a refused header leaves
+    # the installed firmware untouched.
+    DFU_HDR_STAGE_ADDR = 0xFFFFFF10
+    DFU_CAPS_ADDR      = 0xFFFFFF18   # b"OWC1" + u32 capability word (see capabilities())
+    DFU_CAPS_MAGIC     = b"OWC1"
+    CAP_VERIFY_BEFORE_ERASE = 0x1
+    SFU_HEADER_LEN     = 320          # sizeof(SE_FwRawHeaderTypeDef)
+    HDR_VERIFY_TIMEOUT_S = 15.0       # software ECDSA verify on the Cortex-M0
+
     def __init__(self, vid=None, pid=None, xfer_size=1024):
         """
         Args:
@@ -357,9 +369,57 @@ class STM32DFU:
         self._dnload(0, payload)
         self._poll_idle(timeout_s=30.0)   # erase can take up to ~500 ms per sector
 
+    def capabilities(self):
+        """
+        Read the bootloader's capability word (usbd_dfu_if.c DFU_CAPS_VIRT_ADDR).
+        Returns 0 for bootloaders that predate it: they STALL the read or
+        return arbitrary bytes (1.0.3-rc.1 does), so the bits are trusted
+        only behind the b"OWC1" magic.
+        """
+        try:
+            data = bytes(self.upload(self.DFU_CAPS_ADDR, 8))
+        except Exception:  # noqa: BLE001 - STALL / pipe error on older bootloaders
+            self._ensure_idle()
+            return 0
+        if data[:4] != self.DFU_CAPS_MAGIC:
+            return 0
+        return struct.unpack("<I", data[4:8])[0]
+
+    def requires_header_staging(self):
+        """True if this bootloader refuses slot erase until stage_header()."""
+        return bool(self.capabilities() & self.CAP_VERIFY_BEFORE_ERASE)
+
+    def stage_header(self, image):
+        """
+        Verify before erase: send the signed image's SFU header to the
+        bootloader's staging address. Must precede any erase or write of the
+        slot; the bootloader refuses both until a header has verified.
+
+        Raises DFUError if the bootloader refuses the header (wrong key or
+        board, tampered, too large for the slot, or older than the installed
+        firmware). Nothing in the slot has been erased in that case.
+        """
+        image = bytes(image)
+        if len(image) < self.SFU_HEADER_LEN or image[:4] != b"SFU1":
+            raise DFUError("Not a signed image: no 'SFU1' header at offset 0.")
+        self.set_address(self.DFU_HDR_STAGE_ADDR)
+        self._dnload(2, image[:self.SFU_HEADER_LEN])
+        try:
+            self._poll_idle(timeout_s=self.HDR_VERIFY_TIMEOUT_S)
+        except DFUError as e:
+            self._ensure_idle()
+            raise DFUError(
+                "The bootloader refused this image before erasing anything. Possible "
+                "causes: it is signed with a key this bootloader does not trust (wrong "
+                "board, or research vs clinical build), it was modified, it does not "
+                f"fit the slot, or it is older than the installed firmware. ({e})"
+            ) from e
+
     def erase_all(self, progress_cb=None):
         """
         Erase all writable application-slot sectors (0x08010000–0x0801EFFF).
+        The bootloader only allows this after stage_header() has succeeded in
+        this DFU session.
 
         Pages 0-31 (0x08000000-0x0800FFFF, bootloader) and page 63 (user config)
         are read-only over DFU and intentionally skipped.
@@ -417,6 +477,15 @@ class STM32DFU:
                 f"Target range {address:#010x}..{address + total:#010x} is outside the "
                 f"bootloader's writable region {self.APP_FLASH_START:#010x}.."
                 f"{self.APP_FLASH_END:#010x} (sector 0 holds the read-only bootloader).")
+
+        # ── verify before erase: the bootloader checks the signed header ────
+        # Raises (with the slot untouched) if the image is not for this board /
+        # build or is a rollback.
+        # (Bootloaders that predate it do not gate the erase; skip staging.)
+        if self.requires_header_staging():
+            if progress_cb:
+                progress_cb(0, total, "Verifying image header")
+            self.stage_header(data)
 
         # ── erase from the target sector through the end of the slot ────────
         # Not just the image's own sectors: SBSFU's VerifySlot() requires

@@ -34,6 +34,7 @@
 #include "sfu_trace.h"
 #include "sfu_boot.h"
 #include "sfu_mpu_isolation.h"        /* Secure Engine isolated thanks to MPU */
+#include "mapping_export.h"           /* SE_STARTUP_REGION_ROM_START */
 
 
 
@@ -1089,3 +1090,43 @@ SFU_ErrorStatus SFU_IMG_CheckCandidateVersion(uint32_t DwlSlot)
   return (e_ret_status);
 }
 #endif /* SECBOOT_LOADER == SECBOOT_USE_STANDALONE_LOADER */
+
+/**
+  * @brief  Verify a candidate firmware header received over USB DFU, BEFORE the
+  *         active slot is erased (DFU "verify before erase").
+  * @note   Runs outside the secure-boot state machine: on the DFU paths the SE
+  *         RAM has been wiped (SFU_WIPE_SE_RAM_ON_EXIT) or, on a forced DFU, never
+  *         initialized. The SE call gate keeps its lock flag in SE RAM and treats
+  *         any value other than SE_UNLOCKED as locked (reset), so the SE data is
+  *         re-initialized first (SE_CORE_Startup only copies .se_data / zeroes
+  *         .se_bss), the header is checked with the SAME routine secure boot uses
+  *         (SFU magic, reserved bytes zero, ECDSA P-256 against the trusted key in
+  *         se_key.s), and the SE RAM is wiped again before returning.
+  * @param  pHeader: candidate header bytes (start of the signed image)
+  * @param  Len: number of bytes available at pHeader
+  * @retval SFU_SUCCESS if the header is authentic, SFU_ERROR otherwise.
+  */
+SFU_ErrorStatus SFU_IMG_VerifyCandidateHeader(const uint8_t *pHeader, uint32_t Len)
+{
+  static SE_FwRawHeaderTypeDef candidate;   /* word-aligned copy; not secret */
+  SFU_ErrorStatus e_ret_status = SFU_ERROR;
+  SE_ErrorStatus (*se_core_startup)(void);
+
+  if ((pHeader == NULL) || (Len < sizeof(SE_FwRawHeaderTypeDef)))
+  {
+    return SFU_ERROR;
+  }
+  (void) memcpy(&candidate, pHeader, sizeof(candidate));
+
+  se_core_startup = (SE_ErrorStatus(*)(void))((uint32_t) SE_STARTUP_REGION_ROM_START + 1U);
+  if ((*se_core_startup)() == SE_SUCCESS)
+  {
+    e_ret_status = VerifyHeaderSignature(&candidate);
+  }
+
+  /* Leave no SE state behind on the DFU path (same wipe as on DFU entry). */
+  SFU_MPU_DisengageForExit();
+  (void) memset(&candidate, 0, sizeof(candidate));
+
+  return e_ret_status;
+}
