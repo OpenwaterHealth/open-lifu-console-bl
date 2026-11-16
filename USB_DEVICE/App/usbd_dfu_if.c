@@ -29,6 +29,8 @@
 #include "main.h"
 #include "memory_map.h"
 #include "version.h"
+#include "sfu_fwimg_services.h"   /* SFU_IMG_VerifyCandidateHeader, SE_FwRawHeaderTypeDef */
+#include "sfu_fwimg_regions.h"    /* SFU_IMG_IMAGE_OFFSET */
 #include <string.h>
 
 /* USER CODE END INCLUDE */
@@ -53,6 +55,16 @@ static uint16_t s_current_fw_version = 0U;
 /* Set when the host writes to DFU_RESET_VIRT_ADDR (see MEM_If_Write_FS). The
  * bootloader main loop polls DFU_ResetRequested() and performs the reset. */
 static volatile uint8_t s_dfu_reset_requested = 0U;
+
+/* Verify before erase: the host must first DNLOAD the signed image header to
+ * DFU_HDR_STAGE_VIRT_ADDR. Only once that header verifies (signature against
+ * this bootloader's trusted key, size, anti-rollback) are slot erase and write
+ * unlocked, so a wrong-board, wrong-domain, unsigned or rolled-back image is
+ * refused with the installed firmware still intact. */
+#define DFU_HDR_LEN   ((uint32_t)sizeof(SE_FwRawHeaderTypeDef))
+static uint8_t  s_hdr_verified = 0U;                       /* erase/write unlocked */
+static uint8_t  s_hdr_buf[sizeof(SE_FwRawHeaderTypeDef)];  /* the verified header */
+static uint32_t s_img_end      = 0U;                       /* slot address just past the image */
 
 /* USER CODE END PV */
 
@@ -122,6 +134,23 @@ static volatile uint8_t s_dfu_reset_requested = 0U;
  * unverified image. */
 #define DFU_RESET_VIRT_ADDR     0xFFFFFF08U
 
+/* Virtual DFU DNLOAD address (outside flash) for the header-staging step of
+ * "verify before erase": the host downloads the first bytes of the signed
+ * image (at least the SFU header) here before any erase. See dfu_stage_header().
+ * The ECDSA verify runs in software on the Cortex-M0, hence the long poll. */
+#define DFU_HDR_STAGE_VIRT_ADDR 0xFFFFFF10U
+#define DFU_HDR_VERIFY_POLL_MS  3000U
+
+/* Virtual DFU UPLOAD address (outside flash) returning 8 bytes: the magic
+ * "OWC1" followed by a little-endian capability word. Hosts must check the
+ * magic: older bootloaders do not implement this address and may return
+ * arbitrary bytes (1.0.3-rc.1 does) or STALL.
+ *   bit 0  DFU_CAP_VERIFY_BEFORE_ERASE: header must be staged and verified at
+ *          DFU_HDR_STAGE_VIRT_ADDR before any slot erase/write. */
+#define DFU_CAPS_VIRT_ADDR          0xFFFFFF18U
+#define DFU_CAPS_MAGIC              "OWC1"
+#define DFU_CAP_VERIFY_BEFORE_ERASE 0x00000001U
+
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
@@ -183,6 +212,9 @@ static uint16_t MEM_If_GetStatus_FS(uint32_t Add, uint8_t Cmd, uint8_t *buffer);
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
 static uint16_t dfu_read_slot_version(void);
+static uint16_t dfu_erase_page(uint32_t Add);
+static uint16_t dfu_stage_header(const uint8_t *src, uint32_t Len);
+static uint16_t dfu_check_slot_write(const uint8_t *src, uint32_t addr, uint32_t Len);
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 /**
@@ -235,6 +267,24 @@ uint16_t MEM_If_Erase_FS(uint32_t Add)
 {
   /* USER CODE BEGIN 2 */
 
+  /* Verify before erase: nothing in the slot may be erased until a signed
+   * header has been staged and verified (see dfu_stage_header). */
+  if (s_hdr_verified == 0U)
+  {
+    return (USBD_FAIL);
+  }
+  return dfu_erase_page(Add);
+
+  /* USER CODE END 2 */
+}
+
+/**
+  * @brief  Erase one slot page (no verify-before-erase gate; internal use).
+  * @param  Add: Address inside the page to be erased.
+  * @retval USBD_OK if operation is successful, USBD_FAIL else.
+  */
+static uint16_t dfu_erase_page(uint32_t Add)
+{
   /* Reject erase outside the active application slot (protects the bootloader,
    * the SE key material and the user-config page) */
   if ((Add < APP_FLASH_BASE) || (Add >= FLASH_END_ADDR))
@@ -297,8 +347,6 @@ uint16_t MEM_If_Erase_FS(uint32_t Add)
   }
 
   return (status == HAL_OK) ? USBD_OK : USBD_FAIL;
-
-  /* USER CODE END 2 */
 }
 
 /**
@@ -325,8 +373,20 @@ uint16_t MEM_If_Write_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
     return (USBD_OK);
   }
 
+  /* Verify before erase, step 1: stage and verify the signed header. */
+  if (addr == DFU_HDR_STAGE_VIRT_ADDR)
+  {
+    return dfu_stage_header(src, Len);
+  }
+
   /* Protect everything outside the active application slot */
   if ((addr < APP_FLASH_BASE) || (addr >= FLASH_END_ADDR) || (Len > (FLASH_END_ADDR - addr)))
+  {
+    return (USBD_FAIL);
+  }
+
+  /* Verify before erase, step 2: only the image whose header was verified. */
+  if (dfu_check_slot_write(src, addr, Len) != USBD_OK)
   {
     return (USBD_FAIL);
   }
@@ -386,6 +446,18 @@ uint8_t *MEM_If_Read_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
     return dest;
   }
 
+  /* DFU "get capabilities": see DFU_CAPS_VIRT_ADDR. */
+  if ((uint32_t)src == DFU_CAPS_VIRT_ADDR)
+  {
+    uint8_t resp[8];
+    const uint32_t caps = DFU_CAP_VERIFY_BEFORE_ERASE;
+    memcpy(&resp[0], DFU_CAPS_MAGIC, 4U);
+    memcpy(&resp[4], &caps, 4U);
+    memset(dest, 0, Len);
+    memcpy(dest, resp, (Len < sizeof(resp)) ? Len : sizeof(resp));
+    return dest;
+  }
+
   /* Bound DFU UPLOAD/read to the same window as erase/write: the active
    * application slot only. Without this, a host could point the DfuSe address
    * pointer at any address and UPLOAD-read it, exfiltrating the bootloader,
@@ -419,13 +491,13 @@ uint8_t *MEM_If_Read_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
 uint16_t MEM_If_GetStatus_FS(uint32_t Add, uint8_t Cmd, uint8_t *buffer)
 {
   /* USER CODE BEGIN 5 */
-  UNUSED(Add);
-
   uint32_t timeout_ms;
   switch (Cmd)
   {
     case DFU_MEDIA_PROGRAM:
-      timeout_ms = 20U;    /* 1024-byte block = 256 word programs on F0 */
+      /* Header staging runs a software ECDSA verify; anything else is a
+       * 1024-byte block = 256 word programs on F0. */
+      timeout_ms = (Add == DFU_HDR_STAGE_VIRT_ADDR) ? DFU_HDR_VERIFY_POLL_MS : 20U;
       break;
 
     case DFU_MEDIA_ERASE:
@@ -543,7 +615,7 @@ uint8_t DFU_IsRollback(void)
   */
 void DFU_InvalidateImage(void)
 {
-  (void)MEM_If_Erase_FS(APP_FLASH_BASE);
+  (void)dfu_erase_page(APP_FLASH_BASE);
 }
 
 /**
@@ -553,6 +625,100 @@ void DFU_InvalidateImage(void)
 void DFU_ClearDownloadState(void)
 {
   s_dfu_image_written = 0U;
+  s_hdr_verified      = 0U;   /* a new download must stage a header again */
+}
+
+/**
+  * @brief  Verify before erase, step 1: stage the candidate header and verify it.
+  * @note   Checks, in order, all BEFORE anything in the slot is touched:
+  *          - at least a full SFU header was sent;
+  *          - FwSize is non-zero and the image fits the slot;
+  *          - anti-rollback: FwVersion >= the installed version (latched here);
+  *          - the header signature, with the same SE routine as secure boot
+  *            (SFU magic, reserved bytes zero, ECDSA P-256, trusted key).
+  *         Any failure re-locks erase/write and the host sees DFU_ERROR_WRITE.
+  * @retval USBD_OK if the header is accepted, USBD_FAIL else.
+  */
+static uint16_t dfu_stage_header(const uint8_t *src, uint32_t Len)
+{
+  uint32_t fw_size;
+  uint16_t fw_version;
+  const uint32_t max_fw = (FLASH_END_ADDR - APP_FLASH_BASE) - SFU_IMG_IMAGE_OFFSET;
+
+  s_hdr_verified = 0U;
+  s_img_end      = 0U;
+
+  if (Len < DFU_HDR_LEN)
+  {
+    return (USBD_FAIL);
+  }
+  memcpy(s_hdr_buf, src, DFU_HDR_LEN);
+
+  /* Header layout: FwVersion u16 at 0x006, FwSize u32 at 0x008 (little-endian) */
+  fw_version = (uint16_t)((uint16_t)s_hdr_buf[6] | ((uint16_t)s_hdr_buf[7] << 8));
+  fw_size    = (uint32_t)s_hdr_buf[8] | ((uint32_t)s_hdr_buf[9] << 8) |
+               ((uint32_t)s_hdr_buf[10] << 16) | ((uint32_t)s_hdr_buf[11] << 24);
+  if ((fw_size == 0U) || (fw_size > max_fw))
+  {
+    return (USBD_FAIL);
+  }
+
+  /* Anti-rollback, now before the erase (the post-manifest check stays). */
+  if (s_cur_ver_captured == 0U)
+  {
+    s_cur_ver_captured   = 1U;
+    s_current_fw_version = dfu_read_slot_version();
+  }
+  if (fw_version < s_current_fw_version)
+  {
+    return (USBD_FAIL);
+  }
+
+  if (SFU_IMG_VerifyCandidateHeader(s_hdr_buf, DFU_HDR_LEN) != SFU_SUCCESS)
+  {
+    return (USBD_FAIL);
+  }
+
+  s_img_end      = APP_FLASH_BASE + SFU_IMG_IMAGE_OFFSET + fw_size;
+  s_hdr_verified = 1U;
+  return (USBD_OK);
+}
+
+/**
+  * @brief  Verify before erase, step 2: allow a slot write only for the image
+  *         whose header was verified. The header bytes must match the verified
+  *         header exactly, and nothing but 0xFF padding may go past the image
+  *         end (the slot after the image must stay blank for secure boot).
+  * @retval USBD_OK if the write is allowed, USBD_FAIL else.
+  */
+static uint16_t dfu_check_slot_write(const uint8_t *src, uint32_t addr, uint32_t Len)
+{
+  uint32_t i;
+
+  if (s_hdr_verified == 0U)
+  {
+    return (USBD_FAIL);
+  }
+  for (i = 0U; i < Len; i++)
+  {
+    uint32_t a = addr + i;
+    if (a < (APP_FLASH_BASE + DFU_HDR_LEN))
+    {
+      if (src[i] != s_hdr_buf[a - APP_FLASH_BASE])
+      {
+        return (USBD_FAIL);
+      }
+    }
+    else if ((a >= s_img_end) && (src[i] != 0xFFU))
+    {
+      return (USBD_FAIL);
+    }
+    else
+    {
+      /* image body (or header padding): verified at boot by the SHA-256 tag */
+    }
+  }
+  return (USBD_OK);
 }
 
 /**
