@@ -100,6 +100,27 @@ jobs:
             bash -lc "git config --global --add safe.directory /workspace && cmake --preset ${BUILD_TYPE} && cmake --build build/${BUILD_TYPE} --config ${BUILD_TYPE} --target all -j 10"
 
       # ---------------------------
+      # SBOM (CycloneDX 1.6) for this build: scripts/gen_sbom.py with the toolchain
+      # and newlib versions of the build image above and the reviewed, hash-pinned
+      # scripts/sbom-manifest.json. Uploaded with the firmware and attached to
+      # tagged releases, so every release carries the component list it was built from.
+      # ---------------------------
+      - name: Generate SBOM
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/openwaterhealth/stm32-build-env:latest
+          IMG_REF="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMG")"
+          TOOLCHAIN="$(docker run --rm "$IMG" arm-none-eabi-gcc --version | head -1)"
+          NEWLIB="$(docker run --rm "$IMG" sh -c 'echo "#include <newlib.h>" | arm-none-eabi-gcc -E -dM -' \
+                    | sed -n 's/^#define _NEWLIB_VERSION "\(.*\)"/\1/p')"
+          test -n "$NEWLIB"
+          python3 scripts/gen_sbom.py --root . --manifest scripts/sbom-manifest.json \
+            --name "${GITHUB_REPOSITORY#*/}" --config "$BUILD_TYPE" \
+            --toolchain "$TOOLCHAIN" --newlib-version "$NEWLIB" --build-image "$IMG_REF" \
+            --trusted-key research=py-tools/keys/research/ecdsa_public.pem \
+            -o "build/${BUILD_TYPE}/lifu-console-bl.cdx.json"
+
+      # ---------------------------
       # Upload Firmware
       # ---------------------------
       - name: Upload firmware artifact
@@ -109,6 +130,7 @@ jobs:
           path: |
             build/${{ env.BUILD_TYPE }}/*.hex
             build/${{ env.BUILD_TYPE }}/*.bin
+            build/${{ env.BUILD_TYPE }}/*.cdx.json
 
       # ---------------------------
       # Create GitHub Release (tags only)
@@ -174,3 +196,4 @@ jobs:
           files: |
             build/${{ env.BUILD_TYPE }}/*.hex
             build/${{ env.BUILD_TYPE }}/*.bin
+            build/${{ env.BUILD_TYPE }}/*.cdx.json
