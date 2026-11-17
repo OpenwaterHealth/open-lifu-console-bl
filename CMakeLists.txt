@@ -49,7 +49,15 @@ endif()
 
 string(TIMESTAMP FW_BUILD_TIME_UTC "%Y-%m-%d %H:%M:%S UTC" UTC)
 
-message(STATUS "FW version   : ${FW_GIT_DESCRIBE}")
+# Bootloader variant (see app_sfu.h and the target settings below). Declared here so
+# the version string can carry it: FW_VERSION (DFU version read, USB product string
+# "OW DFU <version>") is the git describe plus "+research" or "+clinical" (semver
+# build metadata, as the firmware's "+fda"), so the host can tell the two apart.
+set(LIFU_BL_VARIANT "research" CACHE STRING "Bootloader variant: research or clinical")
+set_property(CACHE LIFU_BL_VARIANT PROPERTY STRINGS research clinical)
+set(FW_VERSION_STRING "${FW_GIT_DESCRIBE}+${LIFU_BL_VARIANT}")
+
+message(STATUS "FW version   : ${FW_VERSION_STRING}")
 message(STATUS "FW git sha   : ${FW_GIT_SHA}")
 message(STATUS "FW build time: ${FW_BUILD_TIME_UTC}")
 
@@ -155,8 +163,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 #   research : unlocked, trusts py-tools/keys/research/ecdsa_public.pem, debug traces on
 #   clinical : WRP + RDP level 1 applied on first boot, trusts the KMS key
 #              py-tools/keys/clinical/ecdsa_public.pem, no traces, no ROM-DFU entry
-set(LIFU_BL_VARIANT "research" CACHE STRING "Bootloader variant: research or clinical")
-set_property(CACHE LIFU_BL_VARIANT PROPERTY STRINGS research clinical)
+# (LIFU_BL_VARIANT itself is declared above, with the version string.)
 if(LIFU_BL_VARIANT STREQUAL "clinical")
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LIFU_BL_CLINICAL)
 elseif(LIFU_BL_VARIANT STREQUAL "research")
