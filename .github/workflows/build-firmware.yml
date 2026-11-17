@@ -9,7 +9,8 @@ name: Build firmware using published build image
 #              (py-tools/keys/clinical/ecdsa_public.pem). Built on every run so it
 #              always compiles, but published ONLY to the private bucket, on tags:
 #              gs://openwater-firmware-artifacts/<repo>/<tag>/<repo>-<tag>-clinical.*
-#              It is never a workflow artifact or a release asset (public repository).
+#              Neither the binaries nor the clinical SBOM are ever a workflow artifact
+#              or a release asset (public repository).
 # Every run also checks the committed clinical PEM against the KMS key.
 
 on:
@@ -226,7 +227,9 @@ jobs:
           echo "Uploaded to $DEST"
 
       # ---------------------------
-      # Create GitHub Release (tags only): research binaries + both SBOMs.
+      # Create GitHub Release (tags only): research binaries + research SBOM only.
+      # Nothing of the clinical variant is a release asset; its binaries and SBOM are
+      # in the private bucket (the notes give the path and the .bin SHA-256).
       # A plain branch push (main/next) or a workflow_dispatch builds and uploads the
       # research artifact above, then skips all release handling — GITHUB_REF_NAME on a
       # branch push is the branch name (e.g. "next"), which is not a valid release tag.
@@ -299,4 +302,3 @@ jobs:
             _research/lifu-console-bl.hex
             _research/lifu-console-bl.bin
             _research/lifu-console-bl.cdx.json
-            _clinical/${{ steps.out.outputs.clinical_name }}.cdx.json
