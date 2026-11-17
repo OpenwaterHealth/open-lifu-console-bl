@@ -1,0 +1,222 @@
+{
+  "description": "Open-LIFU console secure bootloader: X-CUBE-SBSFU 2.8.0 port for STM32F072 (Console Power PCB). ECDSA P-256 / SHA-256 secure boot via CMOX, USB DfuSe update with signature check before slot erase, anti-rollback, RDP level 1 + WRP in the clinical variant. Single-image build: the Secure Engine is linked into the bootloader ELF.",
+  "mcu": "STM32F072RBHx (Arm Cortex-M0)",
+  "licenses": [
+    {
+      "license": {
+        "id": "Apache-2.0"
+      }
+    }
+  ],
+  "components": [
+    {
+      "type": "framework",
+      "name": "STM32Cube MCU Package for STM32F0 (FW_F0)",
+      "version": "1.12.0",
+      "supplier": {
+        "name": "STMicroelectronics"
+      },
+      "scope": "required",
+      "description": "STM32Cube package the HAL, CMSIS device files and middleware were generated from. The HAL / CMSIS versions actually in the tree are derived separately.",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/STMicroelectronics/STM32CubeF0@v1.12.0",
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "HAL v1.7.9, CMSIS Device F0 v2.3.8 and USB Device Library v2.11.6 are the versions STM32CubeF0 v1.12.0 pins (its submodule commits); the .ioc records FW_F0 V1.12.0. Updated 2026-11-16 from V1.11.6."
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "STM32 USB Device Library (Core + DFU class)",
+      "version": "2.11.6",
+      "supplier": {
+        "name": "STMicroelectronics"
+      },
+      "scope": "required",
+      "description": "USB device stack and DfuSe class used by the bootloader's USB DFU update path. Byte-identical to upstream v2.11.6 except Class/DFU/Src/usbd_dfu.c (1-byte mass erase reports errERASE; erase/write failures report errERASE/errWRITE instead of errVENDOR), see Middlewares/ST/STM32_USB_Device_Library/LOCAL_CHANGES.md.",
+      "licenses": [
+        {
+          "license": {
+            "name": "SLA0044"
+          }
+        }
+      ],
+      "purl": "pkg:github/STMicroelectronics/stm32-mw-usb-device@v2.11.6",
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "Core/ and Class/DFU/ diffed against upstream tag v2.11.6 on 2026-11-16; the version pinned by STM32CubeF0 v1.12.0."
+        },
+        {
+          "name": "openwater:security-note",
+          "value": "Updated 2026-11-16 from v2.5.3, which passed the host's wLength unbounded into fixed EP0 class buffers (DFU 1024 B transfer buffer); fixed upstream in v2.8.0. Verified on the bench console (old bootloader crashed on a DFU UPLOAD with wLength 4096; the updated one clamps it and stays responsive)."
+        },
+        {
+          "name": "openwater:files",
+          "value": "Middlewares/ST/STM32_USB_Device_Library/Core/**/*, Middlewares/ST/STM32_USB_Device_Library/Class/**/*"
+        },
+        {
+          "name": "openwater:files-sha256",
+          "value": "1298cbbf7762f17281b8f0d451874596d49da098f3c871fb666826ac43f0b23f"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "X-CUBE-SBSFU (Secure Boot and Secure Firmware Update)",
+      "version": "2.8.0",
+      "supplier": {
+        "name": "STMicroelectronics"
+      },
+      "scope": "required",
+      "description": "Secure boot framework (SBSFU/App, SBSFU/Target, SECoreBin) ported by Openwater to STM32F072 (Cortex-M0) with cryptography routed to CMOX. Crypto scheme SECBOOT_ECCDSA_WITH_AES128_CBC_SHA256 (the AES key is not used for image confidentiality).",
+      "licenses": [
+        {
+          "license": {
+            "name": "SLA0044"
+          }
+        }
+      ],
+      "purl": "pkg:generic/st/x-cube-sbsfu@2.8.0",
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "SBSFU/, SECoreBin/ derived from STM32CubeExpansion_SBSFU_V2.8.0 (Release_Notes.html v2.8.0 / 05-September-2025); no version string in the ported sources. Heavily modified locally, so not hash-pinned."
+        },
+        {
+          "name": "openwater:support-level",
+          "value": "ST has no STM32F0 SBSFU reference; this is an Openwater port and is maintained as Openwater code"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "STM32 Secure Engine",
+      "version": "2.5.4",
+      "supplier": {
+        "name": "STMicroelectronics"
+      },
+      "scope": "required",
+      "description": "Secure Engine core and interface, compiled into the bootloader ELF together with the SECoreBin crypto backend.",
+      "licenses": [
+        {
+          "license": {
+            "name": "SLA0044"
+          }
+        }
+      ],
+      "purl": "pkg:generic/st/stm32-secure-engine@2.5.4",
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "Middlewares/ST/STM32_Secure_Engine/Release_Notes.html: v2.5.4 / 26-September-2025"
+        },
+        {
+          "name": "openwater:files",
+          "value": "Middlewares/ST/STM32_Secure_Engine/**/*.c, Middlewares/ST/STM32_Secure_Engine/**/*.h, Middlewares/ST/STM32_Secure_Engine/**/*.s"
+        },
+        {
+          "name": "openwater:files-sha256",
+          "value": "ad23251eee6b886e6fc8e7585f9681ea503b9aa768b7390303d43566ad6a2db6"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "STM32 Cryptographic Library (CMOX, X-CUBE-CRYPTOLIB, binary)",
+      "version": "5.0.0",
+      "supplier": {
+        "name": "STMicroelectronics"
+      },
+      "scope": "required",
+      "description": "Linked binary libSTM32Cryptographic_CM0_CM0PLUS.a: SHA-256 and ECDSA P-256 signature verification for secure boot (SECoreBin/Src/se_crypto_bootloader.c).",
+      "licenses": [
+        {
+          "license": {
+            "name": "SLA0044"
+          }
+        }
+      ],
+      "purl": "pkg:generic/st/x-cube-cryptolib@5.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "af5a92601d536a97cb78760611f94f54026ab75c93a446eba52b2e9e5bdc0317"
+        }
+      ],
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "Middlewares/ST/STM32_Cryptographic/lib/libSTM32Cryptographic_CM0_CM0PLUS.a is byte-identical (SHA-256 above) to the archive in STM32CubeExpansion_Crypto_V5.0.0 (Release_Notes.html V5.0.0); linked by CMakeLists.txt"
+        },
+        {
+          "name": "openwater:files",
+          "value": "Middlewares/ST/STM32_Cryptographic/**/*"
+        },
+        {
+          "name": "openwater:files-sha256",
+          "value": "a762328390fe62712270b8495e683c1be492c7d4cc030d5f9e40c237add394d2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "micro-ecc (uECC)",
+      "supplier": {
+        "name": "Kenneth MacKay"
+      },
+      "scope": "excluded",
+      "description": "Present in the source tree (Core/Src/uECC.c, *.inc, Core/Inc/uECC*.h, types.h) but in no CMake source list: not compiled into the image. Candidate for removal from the tree.",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:github/kmackay/micro-ecc",
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "Core/Src/uECC.c: Copyright 2014, Kenneth MacKay, BSD 2-clause; absent from CMakeLists.txt and cmake/stm32cubemx/CMakeLists.txt"
+        },
+        {
+          "name": "openwater:files",
+          "value": "Core/Src/uECC.c, Core/Src/*.inc, Core/Inc/uECC.h, Core/Inc/uECC_vli.h, Core/Inc/types.h"
+        },
+        {
+          "name": "openwater:files-sha256",
+          "value": "2d655ad211452dc4712823f5188f4c83abf0e21a1c819a83fd1ce0528dd78998"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sha256.c (unattributed SHA-256 implementation)",
+      "scope": "excluded",
+      "description": "Core/Src/sha256.c and Core/Inc/sha256.h: no copyright or licence header, origin not recorded; in no CMake source list, not compiled into the image (secure boot hashes with CMOX). Candidate for removal from the tree.",
+      "properties": [
+        {
+          "name": "openwater:evidence",
+          "value": "absent from CMakeLists.txt and cmake/stm32cubemx/CMakeLists.txt"
+        },
+        {
+          "name": "openwater:files",
+          "value": "Core/Src/sha256.c, Core/Inc/sha256.h"
+        },
+        {
+          "name": "openwater:files-sha256",
+          "value": "982e9f0257848a1b90d1010cecdd42346ce72fada197a90f89dcb3d40b43b11c"
+        }
+      ]
+    }
+  ]
+}
