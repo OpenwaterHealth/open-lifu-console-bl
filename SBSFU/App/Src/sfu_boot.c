@@ -960,12 +960,12 @@ static void SFU_BOOT_SM_VerifyUserFwSignature(void)
           if (SFU_SUCCESS == e_ret_status)
           {
             /* Verify that there is no additional code beyond firmware image.
-             * NOTE: the application's persistent-config flash region MUST live
-             * OUTSIDE this slot (see Core/Inc/memory_map.h — LIFU config page
-             * 0x0801F000, user config 0x0801F800). If it were inside the slot,
-             * the app writing its config would leave non-blank data past the
-             * image and this check would fail on the next boot, invalidating a
-             * perfectly good firmware. */
+             * NOTE: every flash region the application or a DFU preset write
+             * changes MUST live OUTSIDE this slot (see Core/Inc/memory_map.h —
+             * presets 0x0801E800, LIFU config 0x0801F000, anti-rollback floor
+             * 0x0801F800). If one were inside the slot, writing it would leave
+             * non-blank data past the image and this check would fail on the
+             * next boot, invalidating a perfectly good firmware. */
             e_ret_status = SFU_IMG_VerifyActiveSlot(SLOT_ACTIVE_1 + i);
             if (SFU_SUCCESS != e_ret_status)
             {

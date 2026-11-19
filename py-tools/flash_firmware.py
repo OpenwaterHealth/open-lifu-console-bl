@@ -150,7 +150,7 @@ def cmd_erase(args):
     # signed image that is going to be installed.
     with open(args.binary, "rb") as f:
         image = f.read()
-    print("Erasing the application slot (0x08010000–0x0801EFFF)...")
+    print("Erasing the application slot (0x08010000–0x0801E7FF)...")
     print()
     with STM32DFU() as dfu:
         dfu.connect(serial=args.serial)

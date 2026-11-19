@@ -158,7 +158,7 @@ class STM32DFU:
     # bootloader (sector 0), reserved sectors, the anti-rollback floor and the
     # user-config sector are all read-only over DFU.
     APP_FLASH_START = 0x08010000   # SBSFU active slot start (signed image goes here)
-    APP_FLASH_END   = 0x0801F000   # exclusive end of writable region (active-slot end + 1)
+    APP_FLASH_END   = 0x0801E800   # exclusive end of the active slot (pages 32-60; presets at page 61)
 
     # Virtual UPLOAD address that returns the bootloader version string
     # (usbd_dfu_if.c DFU_VERSION_VIRT_ADDR / DFU_VERSION_READ_LEN).
@@ -417,11 +417,12 @@ class STM32DFU:
 
     def erase_all(self, progress_cb=None):
         """
-        Erase all writable application-slot sectors (0x08010000–0x0801EFFF).
+        Erase all writable application-slot sectors (0x08010000–0x0801E7FF).
         The bootloader only allows this after stage_header() has succeeded in
         this DFU session.
 
-        Pages 0-31 (0x08000000-0x0800FFFF, bootloader) and page 63 (user config)
+        Pages 0-31 (0x08000000-0x0800FFFF, bootloader), page 61 (presets, a signed
+        package only) and pages 62-63 (app config, anti-rollback floor)
         are read-only over DFU and intentionally skipped.
 
         Args:
