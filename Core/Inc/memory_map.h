@@ -76,10 +76,11 @@ extern "C" {
  * bootloader — the existing application already implements its side.
  *
  *  BKP0R  'OWBL' signature: marks the register bank as initialized
- *  BKP1R  one-shot DFU request: app writes it + NVIC_SystemReset(); the
- *         bootloader consumes it. Two flavours:
- *           'DFU!' -> enter THIS (Open-LIFU) bootloader's USB DFU
- *           'DFUS' -> jump to the STM32 built-in system (ROM) bootloader
+ *  BKP1R  one-shot DFU request: app writes 'DFU!' + NVIC_SystemReset() to
+ *         enter THIS (Open-LIFU) bootloader's USB DFU. The bootloader consumes
+ *         whatever it holds on every boot and ignores any other word (older
+ *         apps wrote 'DFUS' for the STM32 ROM loader, which no build of this
+ *         bootloader enters).
  *  BKP2R  boot state: bits 8-15 = boot-attempt fail counter (bootloader
  *         increments before launch; app clears on successful boot)
  *  BKP3R  reserved (legacy: last bad fw marker; app clears it)
@@ -87,7 +88,6 @@ extern "C" {
  */
 #define BL_BKP_SIGNATURE              ((uint32_t)0x4F57424CU) /* 'OWBL' */
 #define BL_BKP_REQ_DFU_MAGIC          ((uint32_t)0x21554644U) /* 'DFU!' -> Open-LIFU DFU */
-#define BL_BKP_REQ_STM32_DFU_MAGIC    ((uint32_t)0x53554644U) /* 'DFUS' -> STM32 system bootloader */
 #define BL_BKP_STATE_FAILCOUNT_SHIFT  (8U)
 #define BL_BKP_STATE_FAILCOUNT_MASK   ((uint32_t)0xFFU << BL_BKP_STATE_FAILCOUNT_SHIFT)
 #define BL_BOOT_FAIL_MAX              (3U)
