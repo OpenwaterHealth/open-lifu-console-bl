@@ -3,8 +3,8 @@
   * @file    anti_rollback.c
   * @brief   Anti-rollback version floor — STM32F072 port.
   *
-  * Persists the monotonic version floor in the USER CONFIG flash page
-  * (page 63, MEM_USER_CONFIG_BASE = 0x0801F800, 2 KB):
+  * Persists the monotonic version floor in its own flash page
+  * (page 63, MEM_ANTIROLLBACK_BASE = 0x0801F800, 2 KB):
   *   - outside the DFU-writable window [MEM_DFU_WRITABLE_BASE,
   *     MEM_DFU_WRITABLE_END) enforced by usbd_dfu_if.c, so a downgrade
   *     image can never erase the floor over USB;
@@ -33,8 +33,8 @@
 #include "memory_map.h"
 #include "stm32f0xx_hal.h"
 
-#define AR_PAGE_BASE   MEM_USER_CONFIG_BASE
-#define AR_PAGE_SIZE   MEM_USER_CONFIG_SIZE
+#define AR_PAGE_BASE   MEM_ANTIROLLBACK_BASE
+#define AR_PAGE_SIZE   MEM_ANTIROLLBACK_SIZE
 #define AR_NUM_SLOTS   (AR_PAGE_SIZE / 2U)      /* 1024 uint16_t records */
 #define AR_BLANK       ((uint16_t)0xFFFFU)
 

@@ -66,6 +66,18 @@ static uint8_t  s_hdr_verified = 0U;                       /* erase/write unlock
 static uint8_t  s_hdr_buf[sizeof(SE_FwRawHeaderTypeDef)];  /* the verified header */
 static uint32_t s_img_end      = 0U;                       /* slot address just past the image */
 
+/* Signed preset write (page 61): the host first DNLOADs the PRS1 package header
+ * to DFU_PRESET_STAGE_VIRT_ADDR. Only once it verifies (signature against this
+ * bootloader's trusted key, body fits the page) are page-61 erase and write
+ * unlocked, for that package only. The body's SHA-256 is checked against the
+ * header as soon as the write reaches the end of the body (dfu_write_preset):
+ * a mismatch erases the page and fails that write. (Not at manifestation: the
+ * DFU class resets the device itself in DFU_Leave, bitManifestationTolerant
+ * = 0, before the main loop could check anything.) */
+static uint8_t  s_preset_verified = 0U;                     /* page-61 erase/write unlocked */
+static uint8_t  s_preset_hdr[sizeof(SE_FwRawHeaderTypeDef)];/* the verified package header */
+static uint32_t s_preset_end      = 0U;                     /* page address just past the body */
+
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -100,20 +112,22 @@ static uint32_t s_img_end      = 0U;                       /* slot address just 
  * DfuSe sector type letters encode access (bit0=read, bit1=erase, bit2=write):
  *   'a' = 1 = read-only,  'g' = 7 = read+erase+write.
  *   pages  0-31    bootloader (incl. SE keys)   read-only  -> 32*2Ka
- *   pages 32-61    active app slot              r/w/erase  -> 30*2Kg
+ *   pages 32-60    active app slot              r/w/erase  -> 29*2Kg
+ *   page  61       presets (signed package)     r/w/erase  -> 01*2Kg
  *   page  62       LIFU app runtime config      read-only  -> (part of 02*2Ka)
- *   page  63       user config                  read-only  -> (part of 02*2Ka)
+ *   page  63       anti-rollback floor          read-only  -> (part of 02*2Ka)
  * The DFU writable window is clamped to the SBSFU active slot
- * (SLOT_ACTIVE_1: 0x08010000-0x0801EFFF, see Linker/mapping_fwimg.ld) so that
- * ALL DFU-writable flash is covered by secure-boot slot verification. */
-#define FLASH_DESC_STR      "@Internal Flash/0x08000000/32*2Ka,30*2Kg,02*2Ka"
+ * (SLOT_ACTIVE_1: 0x08010000-0x0801E7FF, see Linker/mapping_fwimg.ld) so that
+ * all DFU-writable firmware is covered by secure-boot slot verification, plus
+ * the preset page, which takes only a package whose PRS1 header verified. */
+#define FLASH_DESC_STR      "@Internal Flash/0x08000000/32*2Ka,29*2Kg,01*2Kg,02*2Ka"
 
-/* DFU writable window: the active application slot only. The bootloader (below
- * APP_FLASH_BASE) and everything at/above FLASH_END_ADDR (the app-config and
- * user-config pages) are excluded and cannot be erased, written, or read over
- * DFU. */
+/* DFU writable window: the active application slot, plus the preset page
+ * (gated separately). The bootloader (below APP_FLASH_BASE), the app-config
+ * page and the anti-rollback page are excluded and cannot be erased, written,
+ * or read over DFU. */
 #define APP_FLASH_BASE      MEM_DFU_WRITABLE_BASE   /* 0x08010000 (active slot start) */
-#define FLASH_END_ADDR      MEM_DFU_WRITABLE_END    /* 0x0801F000 (slot end + 1, exclusive) */
+#define FLASH_END_ADDR      MEM_DFU_WRITABLE_END    /* 0x0801E800 (slot end + 1, exclusive) */
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
 
@@ -145,11 +159,19 @@ static uint32_t s_img_end      = 0U;                       /* slot address just 
  * "OWC1" followed by a little-endian capability word. Hosts must check the
  * magic: older bootloaders do not implement this address and may return
  * arbitrary bytes (1.0.3-rc.1 does) or STALL.
- *   bit 0  DFU_CAP_VERIFY_BEFORE_ERASE: header must be staged and verified at
- *          DFU_HDR_STAGE_VIRT_ADDR before any slot erase/write. */
+ *   bit 0  BL_CAP_VERIFY_BEFORE_ERASE: header must be staged and verified at
+ *          DFU_HDR_STAGE_VIRT_ADDR before any slot erase/write.
+ *   bit 1  BL_CAP_SIGNED_PRESET_WRITE: page 61 takes a signed preset package,
+ *          its header staged and verified at DFU_PRESET_STAGE_VIRT_ADDR first.
+ * The bits are defined in Core/Inc/memory_map.h (also in the info block). */
 #define DFU_CAPS_VIRT_ADDR          0xFFFFFF18U
 #define DFU_CAPS_MAGIC              "OWC1"
-#define DFU_CAP_VERIFY_BEFORE_ERASE 0x00000001U
+
+/* Virtual DFU DNLOAD address (outside flash) for the header of a signed preset
+ * package: the host downloads its 320-byte PRS1 header here before erasing or
+ * writing page 61. See dfu_stage_preset(). Same software ECDSA verify, same
+ * long poll as DFU_HDR_STAGE_VIRT_ADDR. */
+#define DFU_PRESET_STAGE_VIRT_ADDR  0xFFFFFF20U
 
 /* USER CODE END PRIVATE_DEFINES */
 
@@ -215,6 +237,10 @@ static uint16_t dfu_read_slot_version(void);
 static uint16_t dfu_erase_page(uint32_t Add);
 static uint16_t dfu_stage_header(const uint8_t *src, uint32_t Len);
 static uint16_t dfu_check_slot_write(const uint8_t *src, uint32_t addr, uint32_t Len);
+static uint16_t dfu_program(const uint8_t *src, uint32_t addr, uint32_t Len);
+static uint16_t dfu_stage_preset(const uint8_t *src, uint32_t Len);
+static uint16_t dfu_erase_preset_page(void);
+static uint16_t dfu_write_preset(const uint8_t *src, uint32_t addr, uint32_t Len);
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 /**
@@ -266,6 +292,12 @@ uint16_t MEM_If_DeInit_FS(void)
 uint16_t MEM_If_Erase_FS(uint32_t Add)
 {
   /* USER CODE BEGIN 2 */
+
+  /* The preset page: only once a signed preset package has been staged. */
+  if ((Add >= MEM_PRESET_BASE) && (Add < MEM_PRESET_END))
+  {
+    return dfu_erase_preset_page();
+  }
 
   /* Verify before erase: nothing in the slot may be erased until a signed
    * header has been staged and verified (see dfu_stage_header). */
@@ -379,6 +411,16 @@ uint16_t MEM_If_Write_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
     return dfu_stage_header(src, Len);
   }
 
+  /* Signed preset package: stage its header, or write the preset page. */
+  if (addr == DFU_PRESET_STAGE_VIRT_ADDR)
+  {
+    return dfu_stage_preset(src, Len);
+  }
+  if ((addr >= MEM_PRESET_BASE) && (addr < MEM_PRESET_END))
+  {
+    return dfu_write_preset(src, addr, Len);
+  }
+
   /* Protect everything outside the active application slot */
   if ((addr < APP_FLASH_BASE) || (addr >= FLASH_END_ADDR) || (Len > (FLASH_END_ADDR - addr)))
   {
@@ -391,6 +433,25 @@ uint16_t MEM_If_Write_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
     return (USBD_FAIL);
   }
 
+  if (dfu_program(src, addr, Len) != USBD_OK)
+  {
+    return (USBD_FAIL);
+  }
+
+  s_dfu_image_written = 1U;   /* a new image was programmed: arm post-manifest reboot */
+
+  return (USBD_OK);
+
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief  Program Len bytes at a flash address (word by word; a partial final
+  *         word is padded with 0xFF). The caller has checked the range.
+  * @retval USBD_OK if every word programmed, USBD_FAIL else.
+  */
+static uint16_t dfu_program(const uint8_t *src, uint32_t addr, uint32_t Len)
+{
   uint32_t remaining = Len;
 
   HAL_FLASH_Unlock();
@@ -413,12 +474,7 @@ uint16_t MEM_If_Write_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
   }
 
   HAL_FLASH_Lock();
-
-  s_dfu_image_written = 1U;   /* a new image was programmed: arm post-manifest reboot */
-
   return (USBD_OK);
-
-  /* USER CODE END 3 */
 }
 
 /**
@@ -450,7 +506,7 @@ uint8_t *MEM_If_Read_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
   if ((uint32_t)src == DFU_CAPS_VIRT_ADDR)
   {
     uint8_t resp[8];
-    const uint32_t caps = DFU_CAP_VERIFY_BEFORE_ERASE;
+    const uint32_t caps = BL_CAPS;
     memcpy(&resp[0], DFU_CAPS_MAGIC, 4U);
     memcpy(&resp[4], &caps, 4U);
     memset(dest, 0, Len);
@@ -459,18 +515,19 @@ uint8_t *MEM_If_Read_FS(uint8_t *src, uint8_t *dest, uint32_t Len)
   }
 
   /* Bound DFU UPLOAD/read to the same window as erase/write: the active
-   * application slot only. Without this, a host could point the DfuSe address
-   * pointer at any address and UPLOAD-read it, exfiltrating the bootloader,
-   * the SE key material (se_key.s in the first pages), the user-config page,
-   * or RAM. The comparison against (FLASH_END_ADDR - addr) avoids the unsigned
-   * overflow that (addr + Len) would risk. Returning NULL makes the DFU class
-   * STALL the packet and NAK the command. */
+   * application slot and the preset page right above it (MEM_PRESET_END), so a
+   * host can read back what it wrote. Without this, a host could point the
+   * DfuSe address pointer at any address and UPLOAD-read it, exfiltrating the
+   * bootloader, the SE key material (se_key.s in the first pages), the
+   * app-config page, or RAM. The comparison against (MEM_PRESET_END - addr)
+   * avoids the unsigned overflow that (addr + Len) would risk. Returning NULL
+   * makes the DFU class STALL the packet and NAK the command. */
   {
     uint32_t addr = (uint32_t)src;
 
     if ((addr < APP_FLASH_BASE) ||
-        (addr >= FLASH_END_ADDR) ||
-        (Len  > (FLASH_END_ADDR - addr)))
+        (addr >= MEM_PRESET_END) ||
+        (Len  > (MEM_PRESET_END - addr)))
     {
       return (NULL);
     }
@@ -497,7 +554,8 @@ uint16_t MEM_If_GetStatus_FS(uint32_t Add, uint8_t Cmd, uint8_t *buffer)
     case DFU_MEDIA_PROGRAM:
       /* Header staging runs a software ECDSA verify; anything else is a
        * 1024-byte block = 256 word programs on F0. */
-      timeout_ms = (Add == DFU_HDR_STAGE_VIRT_ADDR) ? DFU_HDR_VERIFY_POLL_MS : 20U;
+      timeout_ms = ((Add == DFU_HDR_STAGE_VIRT_ADDR) || (Add == DFU_PRESET_STAGE_VIRT_ADDR))
+                   ? DFU_HDR_VERIFY_POLL_MS : 20U;
       break;
 
     case DFU_MEDIA_ERASE:
@@ -626,6 +684,7 @@ void DFU_ClearDownloadState(void)
 {
   s_dfu_image_written = 0U;
   s_hdr_verified      = 0U;   /* a new download must stage a header again */
+  s_preset_verified   = 0U;   /* ... and a new preset package its header */
 }
 
 /**
@@ -716,6 +775,131 @@ static uint16_t dfu_check_slot_write(const uint8_t *src, uint32_t addr, uint32_t
     else
     {
       /* image body (or header padding): verified at boot by the SHA-256 tag */
+    }
+  }
+  return (USBD_OK);
+}
+
+/**
+  * @brief  Signed preset write, step 1: stage and verify a PRS1 package header.
+  * @note   Checks, before page 61 is touched: a full header was sent; the body
+  *         fits the page after the header; the header carries the PRS1 magic
+  *         and verifies against this bootloader's trusted key (the same key and
+  *         the same routine as firmware headers). Any failure re-locks page 61
+  *         and the host sees DFU_ERROR_WRITE.
+  * @retval USBD_OK if the header is accepted, USBD_FAIL else.
+  */
+static uint16_t dfu_stage_preset(const uint8_t *src, uint32_t Len)
+{
+  uint32_t body_size;
+  const uint32_t max_body = MEM_PRESET_SIZE - MEM_PRESET_BODY_OFFSET;
+
+  s_preset_verified = 0U;
+  s_preset_end      = 0U;
+
+  if (Len < DFU_HDR_LEN)
+  {
+    return (USBD_FAIL);
+  }
+  memcpy(s_preset_hdr, src, DFU_HDR_LEN);
+
+  /* Header layout: FwSize u32 at 0x008 (little-endian) = body size */
+  body_size = (uint32_t)s_preset_hdr[8] | ((uint32_t)s_preset_hdr[9] << 8) |
+              ((uint32_t)s_preset_hdr[10] << 16) | ((uint32_t)s_preset_hdr[11] << 24);
+  if ((body_size == 0U) || (body_size > max_body))
+  {
+    return (USBD_FAIL);
+  }
+
+  if (SFU_IMG_VerifyPresetPackage(s_preset_hdr, DFU_HDR_LEN, 0U) != SFU_SUCCESS)
+  {
+    return (USBD_FAIL);
+  }
+
+  s_preset_end      = MEM_PRESET_BASE + MEM_PRESET_BODY_OFFSET + body_size;
+  s_preset_verified = 1U;
+  return (USBD_OK);
+}
+
+/**
+  * @brief  Erase the preset page, once a signed preset package was staged.
+  * @retval USBD_OK if erased, USBD_FAIL else.
+  */
+static uint16_t dfu_erase_preset_page(void)
+{
+  FLASH_EraseInitTypeDef eraseInit = {0};
+  uint32_t pageError = 0U;
+  HAL_StatusTypeDef status;
+
+  if (s_preset_verified == 0U)
+  {
+    return (USBD_FAIL);
+  }
+
+  eraseInit.TypeErase   = FLASH_TYPEERASE_PAGES;
+  eraseInit.PageAddress = MEM_PRESET_BASE;
+  eraseInit.NbPages     = 1U;
+
+  HAL_FLASH_Unlock();
+  status = HAL_FLASHEx_Erase(&eraseInit, &pageError);
+  HAL_FLASH_Lock();
+
+  return (status == HAL_OK) ? USBD_OK : USBD_FAIL;
+}
+
+/**
+  * @brief  Signed preset write, step 2: program the staged package into page 61.
+  * @note   Only the package whose header was staged: header bytes must equal it
+  *         and everything past the body must be erased (0xFF). The package is
+  *         written in order; the write that reaches the end of the body also
+  *         checks the header now in flash and the body's SHA-256 against the
+  *         header. On a mismatch the page is erased and that write fails, so a
+  *         torn or altered body never stays in flash.
+  * @retval USBD_OK if programmed (and, for the last block, verified), USBD_FAIL else.
+  */
+static uint16_t dfu_write_preset(const uint8_t *src, uint32_t addr, uint32_t Len)
+{
+  uint32_t i;
+
+  if ((s_preset_verified == 0U) || (Len > (MEM_PRESET_END - addr)))
+  {
+    return (USBD_FAIL);
+  }
+  for (i = 0U; i < Len; i++)
+  {
+    uint32_t a = addr + i;
+    if (a < (MEM_PRESET_BASE + DFU_HDR_LEN))
+    {
+      if (src[i] != s_preset_hdr[a - MEM_PRESET_BASE])
+      {
+        return (USBD_FAIL);
+      }
+    }
+    else if ((a >= s_preset_end) && (src[i] != 0xFFU))
+    {
+      return (USBD_FAIL);
+    }
+    else
+    {
+      /* header padding or body: the body is checked at completion */
+    }
+  }
+
+  if (dfu_program(src, addr, Len) != USBD_OK)
+  {
+    return (USBD_FAIL);
+  }
+
+  /* The last block of the body: check what is now in flash. */
+  if ((addr + Len) >= s_preset_end)
+  {
+    if ((memcmp((const void *)MEM_PRESET_BASE, s_preset_hdr, DFU_HDR_LEN) != 0) ||
+        (SFU_IMG_VerifyPresetPackage(s_preset_hdr, DFU_HDR_LEN,
+                                     MEM_PRESET_BASE + MEM_PRESET_BODY_OFFSET) != SFU_SUCCESS))
+    {
+      (void)dfu_erase_preset_page();   /* still unlocked: s_preset_verified */
+      s_preset_verified = 0U;
+      return (USBD_FAIL);
     }
   }
   return (USBD_OK);

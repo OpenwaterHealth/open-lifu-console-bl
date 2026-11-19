@@ -43,9 +43,19 @@ the 46 KB image) takes well under a second at 48 MHz. The verify is wrapped in
 | Region        | Range                     | Size | DFU access |
 |---------------|---------------------------|------|------------|
 | Bootloader    | `0x08000000`–`0x0800FFFF` | 64 K | read-only  |
-| Active slot   | `0x08010000`–`0x0801EFFF` | 60 K | erase/write/read |
-| App config    | `0x0801F000`–`0x0801F7FF` |  2 K | none (app-owned) |
-| User config   | `0x0801F800`–`0x0801FFFF` |  2 K | none (preserved) |
+| Active slot   | `0x08010000`–`0x0801E7FF` | 58 K | erase/write/read |
+| Presets       | `0x0801E800`–`0x0801EFFF` |  2 K | erase/write/read, signed package only |
+| App config    | `0x0801F000`–`0x0801F7FF` |  2 K | none (app-owned: serial number, calibration) |
+| Anti-rollback | `0x0801F800`–`0x0801FFFF` |  2 K | none (bootloader's version floor) |
+
+The preset page holds one signed preset package: a `PRS1` header with the
+SFU1 header layout, signed with the same key as the firmware (magic, body size
+and the body's SHA-256 in the signed part), then the preset records at `+0x140`.
+DFU writes it only after the host stages that header at the virtual address
+`0xFFFFFF20` and it verifies; the write that reaches the end of the body also
+checks the body's hash, and a mismatch erases the page and fails that write. Capability bit 1 (`OWC1`) advertises
+it. The application reads the layout from the bootloader info block at
+`0x080000E0` (`OWBI`, `SBSFU/Target/Src/bl_info.c`).
 
 Signed image layout inside the slot (`py-tools/sign_firmware.py`):
 
@@ -60,8 +70,8 @@ application writes runtime data (config, calibration, logs) into a flash page
 inside the slot, the next boot sees non-blank bytes past the image, the verify
 fails, and the bootloader **invalidates the firmware** — a good image gets
 bricked after its first save. The console app keeps its runtime config in the
-dedicated page `0x0801F000` (see `openlifu-console-fw/Core/Src/lifu_config.c`),
-which is why the slot ends at `0x0801EFFF`.
+dedicated page `0x0801F000` (see `openlifu-console-fw/Core/Src/lifu_config.c`)
+and its presets in page `0x0801E800`, which is why the slot ends at `0x0801E7FF`.
 
 The C-side single source of truth is `Core/Inc/memory_map.h`; the linker-side
 equivalents are `Linker/mapping_sbsfu.ld` and `Linker/mapping_fwimg.ld` (kept
@@ -126,8 +136,9 @@ exist on ARMv6-M.
 2. Keep the backup-register contract (already implemented in
    openlifu-console-fw: `bootloader_mark_boot_ok()` in `main()`, and the DFU
    command writes `BKP1R='DFU!'` + reset).
-3. Keep all persistent app data OUTSIDE the slot (`>= 0x0801F000`) — see the
-   memory-map warning above. The console app already uses `0x0801F000`.
+3. Keep all persistent app data OUTSIDE the slot (`>= 0x0801E800`) — see the
+   memory-map warning above. The console app uses `0x0801E800` (presets) and
+   `0x0801F000` (config).
 4. Sign:
    ```
    python py-tools/sign_firmware.py --firmware app.bin --version N --output app_signed.bin
