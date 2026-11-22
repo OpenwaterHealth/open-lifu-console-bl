@@ -108,7 +108,7 @@ board.]]`
 > Unlike the two-binary STM32H743 build, the F072 is a **single-image build**: the Secure Engine
 > core is linked into the bootloader ELF, with the SE call gate, key block, and SE startup pinned
 > at fixed flash addresses. The ST HAL/CMSIS/USB components are baselined on **STM32CubeF0
-> V1.11.6**; the SBSFU/SECoreBin Root of Trust is ported from ST X-CUBE-SBSFU; the cryptographic
+> V1.12.0**; the SBSFU/SECoreBin Root of Trust is ported from ST X-CUBE-SBSFU; the cryptographic
 > primitives come from the ST X-CUBE-CRYPTOLIB V5 (CMOX) Cortex-M0/M0+ library. Exact versions are
 > in the SBOM (§7).
 
@@ -342,8 +342,8 @@ attach it; include exact versions, suppliers, licenses, and known-vulnerability 
 |-----------|----------|---------|------|---------|-------|
 | STM32 Secure Engine (SBSFU/SECoreBin) | STMicroelectronics (X-CUBE-SBSFU) | 2.8.0 (ported) | Middleware | ST SLA | Root of Trust; single-image build |
 | STM32 Cryptographic Library (CMOX) | STMicroelectronics (X-CUBE-CRYPTOLIB) | V5.0.0, `libSTM32Cryptographic_CM0_CM0PLUS.a` | Crypto lib | ST SLA | ECDSA P-256 verify + SHA-256 (Cortex-M0 build) |
-| STM32F0 HAL / CMSIS | STMicroelectronics | STM32CubeF0 V1.11.6 | HAL/driver | BSD-3 / Apache-2.0 | Sourced from STM32CubeF0 firmware package V1.11.6 |
-| STM32 USB Device Library (DFU) | STMicroelectronics | STM32CubeF0 V1.11.6 | Middleware | ST SLA | Update interface |
+| STM32F0 HAL / CMSIS | STMicroelectronics | STM32CubeF0 V1.12.0 | HAL/driver | BSD-3 / Apache-2.0 | Sourced from STM32CubeF0 firmware package V1.12.0 (`lifu-console-bl.ioc`) |
+| STM32 USB Device Library (DFU) | STMicroelectronics | STM32CubeF0 V1.12.0 | Middleware | ST SLA | Update interface; local fixes in `Middlewares/ST/STM32_USB_Device_Library/LOCAL_CHANGES.md` |
 | arm-none-eabi-gcc | Arm | 15.2.rel1 | Toolchain | GPL (toolchain) | Build only |
 | Python `cryptography` | PyCA | ≥ 41.0 | Build/sign tool | Apache-2.0/BSD | Off-device signing + key generation |
 | Python `pyusb` + libusb | PyUSB / libusb | 1.x / 1.0 | Build/host tool | BSD / LGPL-2.1 | Off-device flasher (`flash_firmware.py`) |
