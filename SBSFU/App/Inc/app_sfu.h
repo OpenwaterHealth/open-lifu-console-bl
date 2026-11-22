@@ -140,9 +140,21 @@ extern "C" {
  *
  */
 
-#define SECBOOT_DISABLE_SECURITY_IPS  /*!< DEVELOPMENT MODE: All flash/OB security features disabled.
-                                         Re-enable individual protections (WRP, RDP, PCROP, DAP) when
-                                         moving to production. See app_sfu.h security block below. */
+/* Build variant (CMake option LIFU_BL_VARIANT, see CMakeLists.txt):
+ *   research : protections OFF (RDP0, no WRP); trusts the research key
+ *              (py-tools/keys/research/ecdsa_public.pem). Unlocked, re-flashable by SWD/ROM DFU.
+ *   clinical : protections ON (WRP over the bootloader + RDP level 1, DMA), applied on first boot;
+ *              trusts the KMS key (py-tools/keys/clinical/ecdsa_public.pem). No ROM-DFU entry.
+ */
+#if defined(LIFU_BL_CLINICAL) && defined(LIFU_BL_RESEARCH)
+#error "Define exactly one of LIFU_BL_CLINICAL / LIFU_BL_RESEARCH (set by LIFU_BL_VARIANT)."
+#elif defined(LIFU_BL_CLINICAL)
+#define SECBOOT_ENABLE_SECURITY_IPS   /*!< informational: SECBOOT_DISABLE_SECURITY_IPS is NOT defined */
+#elif defined(LIFU_BL_RESEARCH)
+#define SECBOOT_DISABLE_SECURITY_IPS  /*!< research: all flash/OB security features disabled */
+#else
+#error "No bootloader variant: configure with -DLIFU_BL_VARIANT=research|clinical."
+#endif
 
 #if !defined(SECBOOT_DISABLE_SECURITY_IPS)
 
@@ -204,11 +216,11 @@ extern "C" {
  *     app HardFaults unprivileged). The plumbing for that path is left in place
  *     but gated off.
  */
-#if defined(SECBOOT_DISABLE_SECURITY_IPS)
+/* Both variants: the wipe must not depend on the security-IP switch, or turning
+   the protections on would silently drop it. */
 #define SFU_WIPE_SE_RAM_ON_EXIT              /*!< zeroize SE key RAM before exit */
-/* #define SFU_MPU_PROTECT_ENABLE */         /*!< OFF: no benefit for a privileged app; see above */
+/* #define SFU_MPU_PROTECT_ENABLE */         /*!< OFF: no MPU on the Cortex-M0; see above */
 /* #define SFU_MPU_UNPRIV_BOOT */            /*!< OFF: needs an unprivileged-safe app */
-#endif /* SECBOOT_DISABLE_SECURITY_IPS */
 
 /**
   * The define below (SECBOOT_OB_DEV_MODE) determines if the OPTION BYTES should be handled in Development mode or not.

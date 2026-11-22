@@ -85,6 +85,12 @@ SFU_ErrorStatus SFU_IMG_Validation(uint32_t SlotNumber, SE_FwRawHeaderTypeDef *p
 SFU_ErrorStatus SFU_IMG_ControlActiveImgTag(uint32_t SlotNumber);
 uint32_t SFU_IMG_GetFwImageSlot(SE_FwRawHeaderTypeDef *pFwImageHeader);
 SFU_ErrorStatus SFU_IMG_CheckFwVersion(uint32_t ActiveSlot, uint16_t CurrentVersion, uint16_t CandidateVersion);
+SFU_ErrorStatus SFU_IMG_VerifyCandidateHeader(const uint8_t *pHeader, uint32_t Len);
+
+/* Signed preset package (page 61): magic of its header, which otherwise has the
+ * SFU1 header layout and is signed with the same key. */
+#define SFUM_PRESET "PRS1"
+SFU_ErrorStatus SFU_IMG_VerifyPresetPackage(const uint8_t *pHeader, uint32_t Len, uint32_t BodyAddr);
 
 #ifdef __cplusplus
 }

@@ -295,6 +295,23 @@ static void PrintBootBanner(void)
   *         the trace subsystem (and SFU_COM_Init) are compiled out.
   * @retval None
   */
+void SFU_BOOT_ApplyStaticProtectionsForDfu(void)
+{
+#if !defined(SECBOOT_DISABLE_SECURITY_IPS)
+  /* A forced DFU session (app 'DFU!' request or boot-fail fallback) never runs
+     the secure boot service, which is where the option bytes are checked and
+     applied. Apply them here too, so a clinical unit is never in DFU with RDP0
+     or without WRP. If an option byte is written, this resets (OB launch) and
+     the next boot comes back here with the protections in place. */
+  FLOW_CONTROL_INIT(uFlowProtectValue, FLOW_CTRL_INIT_VALUE);
+  if (SFU_LL_SECU_CheckApplyStaticProtections() != SFU_SUCCESS)
+  {
+    SFU_EXCPT_Security_Error();
+  }
+  FLOW_CONTROL_CHECK(uFlowProtectValue, FLOW_CTRL_STATIC_PROTECT);
+#endif /* !SECBOOT_DISABLE_SECURITY_IPS */
+}
+
 void SFU_BOOT_PrintForcedDfuBanner(void)
 {
 #if defined(SFU_DEBUG_MODE) || defined(SFU_TEST_PROTECTION)
@@ -943,12 +960,12 @@ static void SFU_BOOT_SM_VerifyUserFwSignature(void)
           if (SFU_SUCCESS == e_ret_status)
           {
             /* Verify that there is no additional code beyond firmware image.
-             * NOTE: the application's persistent-config flash region MUST live
-             * OUTSIDE this slot (see Core/Inc/memory_map.h — LIFU config page
-             * 0x0801F000, user config 0x0801F800). If it were inside the slot,
-             * the app writing its config would leave non-blank data past the
-             * image and this check would fail on the next boot, invalidating a
-             * perfectly good firmware. */
+             * NOTE: every flash region the application or a DFU preset write
+             * changes MUST live OUTSIDE this slot (see Core/Inc/memory_map.h —
+             * presets 0x0801E800, LIFU config 0x0801F000, anti-rollback floor
+             * 0x0801F800). If one were inside the slot, writing it would leave
+             * non-blank data past the image and this check would fail on the
+             * next boot, invalidating a perfectly good firmware. */
             e_ret_status = SFU_IMG_VerifyActiveSlot(SLOT_ACTIVE_1 + i);
             if (SFU_SUCCESS != e_ret_status)
             {

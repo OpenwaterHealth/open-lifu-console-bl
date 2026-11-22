@@ -145,11 +145,18 @@ def cmd_read(args):
 
 
 def cmd_erase(args):
-    print("Erasing the application slot (0x08010000–0x0801EFFF)...")
+    # The bootloader only allows the slot to be erased after a signed header
+    # for this board has verified (verify before erase), so an erase needs the
+    # signed image that is going to be installed.
+    with open(args.binary, "rb") as f:
+        image = f.read()
+    print("Erasing the application slot (0x08010000–0x0801E7FF)...")
     print()
     with STM32DFU() as dfu:
         dfu.connect(serial=args.serial)
         t0 = time.monotonic()
+        if dfu.requires_header_staging():
+            dfu.stage_header(image)
         dfu.erase_all()
         elapsed = time.monotonic() - t0
     print(f"\nErase complete in {elapsed:.1f}s.")
@@ -206,7 +213,10 @@ def main():
         help="Number of bytes to read")
 
     # erase
-    sub.add_parser("erase", help="Erase all application flash sectors")
+    p_erase = sub.add_parser(
+        "erase", help="Erase all application flash sectors (authorised by a signed image)")
+    p_erase.add_argument(
+        "binary", help="Signed image for this board; its header must verify before the erase")
 
     # leave
     sub.add_parser("leave", help="Reset device into application")

@@ -108,7 +108,7 @@ board.]]`
 > Unlike the two-binary STM32H743 build, the F072 is a **single-image build**: the Secure Engine
 > core is linked into the bootloader ELF, with the SE call gate, key block, and SE startup pinned
 > at fixed flash addresses. The ST HAL/CMSIS/USB components are baselined on **STM32CubeF0
-> V1.11.6**; the SBSFU/SECoreBin Root of Trust is ported from ST X-CUBE-SBSFU; the cryptographic
+> V1.12.0**; the SBSFU/SECoreBin Root of Trust is ported from ST X-CUBE-SBSFU; the cryptographic
 > primitives come from the ST X-CUBE-CRYPTOLIB V5 (CMOX) Cortex-M0/M0+ library. Exact versions are
 > in the SBOM (§7).
 
@@ -120,25 +120,29 @@ Defined in `Core/Inc/memory_map.h` (single source of truth), mirrored in
 Addr range              Size   Pages   Region                 Access control
 ------------------------------------------------------------------------------------
 0x08000000-0x0800FFFF   64K    0-31    BOOTLOADER (+ SE keys) read-only (immutable)
-0x08010000-0x0801EFFF   60K    32-61   APP SLOT 1 (active)    updatable (signed) — DFU writable window
+0x08010000-0x0801E7FF   58K    32-60   APP SLOT 1 (active)    updatable (signed) — DFU writable window
+0x0801E800-0x0801EFFF    2K    61      PRESETS                updatable (signed PRS1 package) via DFU
 0x0801F000-0x0801F7FF    2K    62      APP RUNTIME CONFIG     read-only via DFU (application-managed)
-0x0801F800-0x0801FFFF    2K    63      USER CONFIG            read-only via DFU (preserved)
+0x0801F800-0x0801FFFF    2K    63      ANTI-ROLLBACK FLOOR    read-only via DFU (bootloader-managed)
 ```
 
-The DFU update interface restricts erase/write to the **active application slot only**
-(`0x08010000`–`0x0801EFFF`, the SBSFU `SLOT_ACTIVE_1` extent in `Linker/mapping_fwimg.ld`;
-DfuSe descriptor `32*2Ka,30*2Kg,02*2Ka`). The DFU writable window is deliberately clamped to the
-slot so that **all DFU-writable flash is covered by secure-boot slot verification** (no writable
-region escapes the `VerifyActiveSlot` check). The bootloader pages (0–31), the application
-runtime-config page (62), and the user-config page (63) are **not erasable or writable** through
-the firmware-update (DFU) interface.
+The DFU update interface restricts erase/write to the **active application slot**
+(`0x08010000`–`0x0801E7FF`, the SBSFU `SLOT_ACTIVE_1` extent in `Linker/mapping_fwimg.ld`) and the
+**preset page** (`0x0801E800`–`0x0801EFFF`); DfuSe descriptor `32*2Ka,29*2Kg,01*2Kg,02*2Ka`. Firmware
+in the slot is covered by secure-boot slot verification (`VerifyActiveSlot`). The preset page takes
+only a signed preset package: its `PRS1` header (SFU1 layout, same trusted key, magic inside the
+signed part) must be staged at `0xFFFFFF20` and verify before the page can be erased or written,
+header bytes written must equal it, and when the write reaches the end of the body its SHA-256 must
+equal `FwTag`, or the page is erased and that write fails. The bootloader pages (0–31), the application runtime-config page
+(62), and the anti-rollback page (63) are **not erasable or writable** through the firmware-update
+(DFU) interface.
 
 > **Design rule — application persistent data lives OUTSIDE the slot.** The secure boot verifies
 > not only the image signature and hash but that the slot contains *nothing beyond* the signed
 > image (`SFU_IMG_VerifyActiveSlot`, threat T-7). Therefore any flash the application writes at
 > run time (configuration, calibration) **must** reside outside the active slot. The console
-> application keeps its runtime config in page 62 (`0x0801F000`), which is why the slot ends at
-> `0x0801EFFF`. Placing application-written data inside the slot would cause the *next* boot to
+> application keeps its presets in page 61 (`0x0801E800`) and its runtime config in page 62
+> (`0x0801F000`), which is why the slot ends at `0x0801E7FF`. Placing application-written data inside the slot would cause the *next* boot to
 > detect non-blank bytes past the image and fail verification, safely invalidating a genuine
 > firmware. This is a verification property working as designed, not a defect (see §8, TC-CONFIG-01).
 
@@ -338,8 +342,8 @@ attach it; include exact versions, suppliers, licenses, and known-vulnerability 
 |-----------|----------|---------|------|---------|-------|
 | STM32 Secure Engine (SBSFU/SECoreBin) | STMicroelectronics (X-CUBE-SBSFU) | 2.8.0 (ported) | Middleware | ST SLA | Root of Trust; single-image build |
 | STM32 Cryptographic Library (CMOX) | STMicroelectronics (X-CUBE-CRYPTOLIB) | V5.0.0, `libSTM32Cryptographic_CM0_CM0PLUS.a` | Crypto lib | ST SLA | ECDSA P-256 verify + SHA-256 (Cortex-M0 build) |
-| STM32F0 HAL / CMSIS | STMicroelectronics | STM32CubeF0 V1.11.6 | HAL/driver | BSD-3 / Apache-2.0 | Sourced from STM32CubeF0 firmware package V1.11.6 |
-| STM32 USB Device Library (DFU) | STMicroelectronics | STM32CubeF0 V1.11.6 | Middleware | ST SLA | Update interface |
+| STM32F0 HAL / CMSIS | STMicroelectronics | STM32CubeF0 V1.12.0 | HAL/driver | BSD-3 / Apache-2.0 | Sourced from STM32CubeF0 firmware package V1.12.0 (`lifu-console-bl.ioc`) |
+| STM32 USB Device Library (DFU) | STMicroelectronics | STM32CubeF0 V1.12.0 | Middleware | ST SLA | Update interface; local fixes in `Middlewares/ST/STM32_USB_Device_Library/LOCAL_CHANGES.md` |
 | arm-none-eabi-gcc | Arm | 15.2.rel1 | Toolchain | GPL (toolchain) | Build only |
 | Python `cryptography` | PyCA | ≥ 41.0 | Build/sign tool | Apache-2.0/BSD | Off-device signing + key generation |
 | Python `pyusb` + libusb | PyUSB / libusb | 1.x / 1.0 | Build/host tool | BSD / LGPL-2.1 | Off-device flasher (`flash_firmware.py`) |
@@ -377,6 +381,8 @@ vulnerability testing, and penetration testing.
 | TC-DFU-02 | DFU write to bootloader region rejected | `dfu-util` download targeting `0x08000000` | `[[TODO: capture on F072]]` — DfuSe descriptor marks pages 0–31 read-only (`32*2Ka`); `MEM_If_Write_FS` rejects `addr < 0x08010000` |
 | TC-DFU-03 | DFU write/read outside the active slot rejected | `dfu-util` targeting `0x0801F000` (config) and UPLOAD from `0x08000000` | `[[TODO: capture on F072]]` — write window clamped to `[0x08010000, 0x0801F000)`; `MEM_If_Read_FS` STALLs out-of-window UPLOAD |
 | TC-USERCFG-01 | DFU write/erase of config pages rejected | Target `0x0801F000` / `0x0801F800` | `[[TODO: capture on F072]]` — outside DFU writable window |
+| TC-PRESET-01 | Signed preset package accepted; preset page outside slot verification | Stage a `PRS1` header signed with the trusted key at `0xFFFFFF20`, erase + write page 61, complete; reboot | `[[TODO: capture on F072]]` — page written, body hash checked on the last block, app boots (slot verification unaffected) |
+| TC-PRESET-02 | Unsigned / wrong-key / tampered preset package rejected | (a) header signed with another key, (b) `SFU1` firmware header staged as a preset, (c) body altered after staging, (d) page-61 erase without staging | `[[TODO: capture on F072]]` — (a)(b) refused at staging, nothing erased; (c) last write fails and the page is erased; (d) erase refused |
 | TC-FAILCLOSED-01 | No/invalid FW → safe recovery, no code exec | Empty (erased) slot; reset | **Pass** (STM32F072): enters USB DFU; no unauthenticated execution |
 | TC-IMMUT-01 | Bootloader not modifiable via update path | Hash bootloader region before/after a DFU write attempt to `0x08000000` | `[[TODO: capture on F072]]` — write rejected by descriptor + bounds check; (prod) enforced by WRP |
 | TC-HWPROT-01 | RDP/WRP effective | Read/modify attempts via SWD on a production-provisioned unit | `[[TODO: production build — §12]]` |
@@ -494,7 +500,7 @@ requires **both** the return value and the fault-check output to equal `CMOX_ECC
 
 **Key provisioning & CI.** The on-device key block (`SECoreBin/Startup/se_key.s`, Cortex-M0 Thumb-1
 encoding) is **not committed** (it embeds the AES key). It is regenerated at build time from the
-committed **public** key (`py-tools/keys/ecdsa_public.pem`) plus the `SECOREBIN_AES_KEY` CI secret
+committed **public** key (`py-tools/keys/research/ecdsa_public.pem` for the research variant; the clinical variant trusts the Cloud KMS key in `py-tools/keys/clinical/ecdsa_public.pem`) plus the `SECOREBIN_AES_KEY` CI secret
 (base64 of the 16-byte AES key). Product keys are held in `bl-keys/console` (private key + AES,
 never committed). The signing private key is provisioned only to the application repository's
 signing pipeline.

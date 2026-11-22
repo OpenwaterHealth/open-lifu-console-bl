@@ -49,7 +49,17 @@ endif()
 
 string(TIMESTAMP FW_BUILD_TIME_UTC "%Y-%m-%d %H:%M:%S UTC" UTC)
 
-message(STATUS "FW version   : ${FW_GIT_DESCRIBE}")
+# Bootloader variant (see app_sfu.h and the target settings below). FW_VERSION (DFU
+# version read, USB product string "OW DFU <version>") is the release, the same for
+# both variants: which one a unit runs is told by which key its firmware is signed
+# with (openlifu-sdk firmware_domain(), OW_CMD_SIGCHK), since each variant boots only
+# images signed with its own key. The application's version carries no variant
+# either.
+set(LIFU_BL_VARIANT "research" CACHE STRING "Bootloader variant: research or clinical")
+set_property(CACHE LIFU_BL_VARIANT PROPERTY STRINGS research clinical)
+set(FW_VERSION_STRING "${FW_GIT_DESCRIBE}")
+
+message(STATUS "FW version   : ${FW_VERSION_STRING}")
 message(STATUS "FW git sha   : ${FW_GIT_SHA}")
 message(STATUS "FW build time: ${FW_BUILD_TIME_UTC}")
 
@@ -151,12 +161,25 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Linker
 )
 
-# Add project symbols (macros)
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Enables SFU_DEBUG_MODE traces on USART3 (see app_sfu.h); flip off if the
-    # Release image ever needs the extra flash
-    DEBUG_ENABLED
-)
+# Bootloader variant (see app_sfu.h):
+#   research : unlocked, trusts py-tools/keys/research/ecdsa_public.pem, debug traces on
+#   clinical : WRP + RDP level 1 applied on first boot, trusts the KMS key
+#              py-tools/keys/clinical/ecdsa_public.pem, no traces, no ROM-DFU entry
+# (LIFU_BL_VARIANT itself is declared above, with the version string.)
+if(LIFU_BL_VARIANT STREQUAL "clinical")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LIFU_BL_CLINICAL)
+elseif(LIFU_BL_VARIANT STREQUAL "research")
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        LIFU_BL_RESEARCH
+        # Enables SFU_DEBUG_MODE traces on USART3 (see app_sfu.h)
+        DEBUG_ENABLED
+    )
+else()
+    message(FATAL_ERROR "LIFU_BL_VARIANT must be research or clinical, got '${LIFU_BL_VARIANT}'")
+endif()
+# The SE key block (SECoreBin/Startup/se_key.s) must be generated from this variant's PEM.
+set(LIFU_BL_PEM "${CMAKE_SOURCE_DIR}/py-tools/keys/${LIFU_BL_VARIANT}/ecdsa_public.pem")
+message(STATUS "BL variant   : ${LIFU_BL_VARIANT} (trusts ${LIFU_BL_PEM})")
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

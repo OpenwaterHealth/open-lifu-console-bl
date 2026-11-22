@@ -40,6 +40,13 @@ SECTIONS
     . = ALIGN(4);
     KEEP(*(.isr_vector))
     . = ALIGN(4);
+    /* Bootloader info block at a fixed offset in the vector padding
+     * (Core/Inc/memory_map.h BL_INFO_ADDRESS = 0x080000E0, bl_info.c): the
+     * application reads the flash layout here. */
+    ASSERT(. <= 0xE0, "the vector table overlaps the bootloader info block");
+    . = 0xE0;
+    KEEP(*(.bl_info))
+    ASSERT(. == 0x100, "the bootloader info block must fill 0xE0-0xFF");
   } >ISR_VECTOR
 
   /* SE call gate at fixed address: 4 pad bytes keep SE_CallGate() at
